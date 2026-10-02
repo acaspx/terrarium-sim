@@ -1,0 +1,134 @@
+import type { ThermalRange } from './math.js';
+
+/** How well grounded a species' parameters are. See docs/RESEARCH.md. */
+export type Confidence = 'literature' | 'care-sheet' | 'estimated';
+
+export interface PlantSpecies {
+  kind: 'plant';
+  id: string;
+  commonName: string;
+  scientificName: string;
+  form: 'upright' | 'creeper' | 'moss' | 'fern';
+  /** Light response in PPFD (umol/m2/s): compensation point, saturation, scorch threshold. */
+  light: { comp: number; opt: number; max: number };
+  tempC: ThermalRange;
+  /** Substrate moisture as a fraction of field capacity (1.0 = field capacity, >1 = waterlogged). */
+  moisture: { min: number; optLow: number; optHigh: number; max: number };
+  /** Relative humidity below which the plant is stressed (0..1). */
+  rhMin: number;
+  /** Max relative growth rate per day at saturating light, 12 h photoperiod. */
+  rgrPerDay: number;
+  maxBiomassG: number;
+  /** g water per g fresh biomass per hour at full vapour-pressure deficit, in light. */
+  transpiration: number;
+  /** Fraction of biomass shed as litter per day. */
+  litterPerDay: number;
+  /** How fast turgor is lost when dry / regained when watered (per day). Fittonia "faints". */
+  wiltPerDay: number;
+  recoverPerDay: number;
+  /** Health lost per day under severe stress. */
+  declinePerDay: number;
+  confidence: Confidence;
+  notes: string;
+}
+
+export interface FaunaSpecies {
+  kind: 'fauna';
+  id: string;
+  commonName: string;
+  scientificName: string;
+  role: 'cleanup' | 'pest';
+  tempC: ThermalRange;
+  /** Substrate moisture response: dead-dry below min, fine above opt, drowning above max. */
+  moisture: { min: number; opt: number; max: number };
+  eggDays: number;       // egg (or brood-pouch) duration at optimum
+  juvenileDays: number;  // hatch to maturity at optimum
+  adultLifespanDays: number;
+  /** Eggs (or mancae) per adult per day at optimum, well fed. */
+  fecundityPerDay: number;
+  /** Food intake in grams per individual per day. */
+  intakeG: { juvenile: number; adult: number };
+  /** Relative preference for each food pool. `plant` is only eaten when hungry. */
+  diet: { mold: number; detritus: number; plant: number };
+  /** Soft carrying capacity, individuals per litre of substrate. */
+  densityPerL: number;
+  confidence: Confidence;
+  notes: string;
+}
+
+export type Species = PlantSpecies | FaunaSpecies;
+
+export interface PlantState {
+  id: string;
+  speciesId: string;
+  biomassG: number;
+  health: number;   // 0..1, slow-moving; 0 = dead
+  turgor: number;   // 0..1, fast-moving; visible wilting
+  lightEma: number; // running mean of hourly light factor
+}
+
+export interface FaunaState {
+  speciesId: string;
+  eggs: number;
+  juveniles: number;
+  adults: number;
+}
+
+export interface Container {
+  volumeL: number;
+  substrateL: number;
+  drainageL: number;
+  /** 0 = sealed, 1 = lid fully off. */
+  ventilation: number;
+  light: { ppfd: number; photoperiodH: number };
+  room: { tempC: number; swingC: number; rh: number };
+}
+
+export interface Pools {
+  substrateWaterG: number;
+  reservoirWaterG: number;
+  condensationG: number;
+  co2Mg: number;
+  /** Fresh, labile dead matter: leaf litter, dead plants, frass. Food for mold and the clean-up crew. */
+  detritusG: number;
+  /** Slow organic fraction of the substrate itself (bark, coir, peat). Baseline CO2 and nitrogen supply. */
+  humusG: number;
+  nutrientMg: number;
+  moldG: number;
+}
+
+export interface Climate {
+  hourOfDay: number;
+  lightOn: boolean;
+  ppfd: number;
+  roomTempC: number;
+  airTempC: number;
+  glassTempC: number;
+  rh: number;
+  moisture: number;
+  co2Ppm: number;
+  /** 0 = clear glass, ~0.5 = light mist, >1 = streaming wet. */
+  condensationIndex: number;
+}
+
+export interface SimEvent { hour: number; type: string; message: string }
+
+export interface Alert { severity: 'info' | 'warn' | 'critical'; code: string; message: string; fix: string }
+
+export interface TerrariumState {
+  hour: number;
+  seed: number;
+  container: Container;
+  interiorTempC: number;
+  pools: Pools;
+  plants: PlantState[];
+  fauna: FaunaState[];
+  climate: Climate;
+  events: SimEvent[];
+  /** Cumulative water in/out, for mass-balance checks. */
+  waterLostG: number;
+  waterAddedG: number;
+  waterloggedHours: number;
+  /** Set by airOut(): restore this ventilation at this hour. */
+  ventRevert?: { hour: number; ventilation: number };
+}

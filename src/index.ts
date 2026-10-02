@@ -1,0 +1,7 @@
+export * from './core/types.js';
+export { CONFIG } from './core/config.js';
+export { SPECIES, plantSpecies, faunaSpecies } from './organisms/species.js';
+export { createTerrarium, step, run, addPlant, addFauna, totalWaterG, type Setup } from './sim/terrarium.js';
+export * as care from './sim/care.js';
+export { alerts, healthScore, snapshot } from './sim/health.js';
+export { PRESETS } from './presets.js';
