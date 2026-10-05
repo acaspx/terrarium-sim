@@ -1,6 +1,6 @@
-import { PRESETS } from './presets.js';
-import { alerts, healthScore } from './sim/health.js';
-import { createTerrarium, run } from './sim/terrarium.js';
+import { PRESETS } from '../src/engine/presets.js';
+import { alerts, healthScore } from '../src/engine/sim/health.js';
+import { createTerrarium, run } from '../src/engine/sim/terrarium.js';
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a, i, all) => (a.startsWith('--') ? [a.slice(2), all[i + 1] ?? 'true'] : [])).filter((p) => p.length),

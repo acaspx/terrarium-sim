@@ -1,71 +1,63 @@
 # terrarium-sim
 
-A mechanistic simulation of a closed, bioactive terrarium. It models the jar the
-way it actually works: a water cycle, gas exchange, plants limited by their
-scarcest resource, a clean-up crew whose numbers track their food, mold that
-blooms and gets grazed down, and pests that show up when you overwater.
+Build terrariums and watch them live. A mechanistic simulation of closed,
+bioactive terrariums (water cycle, gas exchange, plants, clean-up crew, mold and
+pests) with a web interface for designing jars and keeping a shelf of them.
 
-Nothing is scripted. The first-month mold bloom, the springtail boom and
-crash, fittonia fainting, the sunny-windowsill death spiral: all of these fall
-out of the rules.
+Nothing is scripted. The first-month mold bloom, the springtail boom and crash,
+fittonia fainting, the sunny-windowsill death spiral: all of it falls out of the
+rules in `src/engine`.
 
-## Quick start
+## Run it
 
 ```bash
 npm install
-npm test                                  # 13 behaviour tests
-npm run sim                               # 120 days of the default jar
-npm run sim -- --preset no-crew --days 180 --every 15
+npm run dev        # the app at http://localhost:5173
+npm test           # engine and customization tests
+npm run sim        # the engine from the command line
 ```
 
-Presets: `tropical-jar`, `no-crew`, `overwatered-windowsill`, `mossy-woodland`.
+## Deploy on Vercel
 
-## Use it as a library
+The app is a static Vite site with no backend; jars are saved in the browser's
+local storage.
 
-```ts
-import { createTerrarium, run, care, snapshot, PRESETS } from './src/index.js';
+1. Push this repo to GitHub.
+2. In Vercel, choose **Add New → Project** and import the repo. Vercel reads
+   `vercel.json` (build `npm run build`, output `dist`).
+3. Every push to `main` deploys; every branch gets a preview URL.
 
-const jar = createTerrarium(PRESETS['tropical-jar']);
-run(jar, 24 * 30);          // one month, hourly steps
-care.mist(jar, 30);         // keeper actions
-care.airOut(jar, 6);
-console.log(snapshot(jar)); // score, climate, plants, fauna, alerts with fixes
-```
+## What is in the app
 
-State is one plain serialisable object (`TerrariumState`), so it can be saved,
-diffed, or handed straight to a UI.
+- **Shelf:** every terrarium as a living jar on a shelf, with a tag showing its day, health and most pressing issue. A compare table for tracking several at once, and a "since you last looked" summary.
+- **Builder:** six steps (vessel, layers, plants, clean-up crew, placement, name) starting from a recipe or blank, with a live preview, inline warnings, and a 90-day forecast that reruns as you design.
+- **Jar view:** conditions, issues with one-tap fixes, care actions (mist, air out, feed, remove mold, prune, change lid or placement), plant and animal rosters, trends and a journal.
+- **Time:** paused, real time (jars keep living while you are away), a day per second, or a week per second.
 
 ## Layout
 
 ```
 src/
-  core/          types, math (thermal curves, RNG), config (every tunable constant)
-  environment/   geometry, climate, water cycle, gas exchange
-  organisms/     species.ts (the catalog: data, not code), plants, fauna, decomposition
-  sim/           terrarium (the hourly loop), care (keeper actions), health (alerts + score)
-  presets.ts     ready-made jars
-  cli.ts
-test/            behaviour tests: each one is a claim about how a real jar behaves
+  engine/          the simulation: no DOM, no React, fully testable
+    core/          types, math, config (every tunable constant)
+    environment/   geometry, climate, water cycle, gas exchange
+    organisms/     species catalog (data), plants, fauna, decomposition
+    sim/           hourly loop, care actions, health and alerts
+    spec.ts        customization: options catalog, spec -> setup, checks, forecast, recipes
+  app/             the React interface
+    jar/Jar.tsx    the living jar, drawn from simulation state
+    screens/       Shelf, Builder, Detail
+    store.ts       persistence, clock, daily history, alert transitions
+scripts/cli.ts     command-line runner
+test/              behaviour tests: each one is a claim about how a real jar behaves
 docs/
-  RESEARCH.md    what makes a terrarium work, per-organism findings, sources
-  MODEL.md       the rules for each organism, and what is still a guess
+  RESEARCH.md      the science behind each organism, with sources
+  MODEL.md         the rules, and what is still a guess
+  CUSTOMIZATION.md vendor research and the v1 customization scope
 ```
 
 ## Adding an organism
 
-Add an entry to `src/organisms/species.ts`. Plants and animals are described
-entirely by parameters (light range, moisture range, life-cycle timings, diet),
-so most species need no new code. See `docs/MODEL.md` for what each parameter does.
-
-## What is in the box
-
-Plants: nerve plant, creeping fig, baby tears pilea, spike moss, cushion moss, maidenhair fern.
-Animals: springtails, dwarf white isopods, rough woodlice, and fungus gnats (uninvited).
-Processes: mold, microbial decay, condensation, CO2 and nitrogen cycling.
-
-## Status
-
-A working first cut. The structure follows the published literature; many
-numbers are calibrated to give realistic qualitative behaviour and are marked
-with a `confidence` level in the catalog. `docs/MODEL.md` lists what to
-calibrate against a real jar next.
+Add an entry to `src/engine/organisms/species.ts`. Organisms are described by
+parameters, so most need no new code. To draw a new plant, add a drawing
+function in `src/app/jar/Jar.tsx`.

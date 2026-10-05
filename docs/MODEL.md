@@ -64,7 +64,7 @@ Constants live in `src/core/config.ts`; species numbers in `src/organisms/specie
 | Saturation vapour density, thermal curve shape, stage structure | Standard physics / published model structure |
 | Springtail timings and tolerances | From literature (see RESEARCH.md) |
 | `heatPerPpfd`, `evapCoeff`, `runoffPerH` | Estimated. Calibrate with a thermometer/hygrometer in a real jar. |
-| CO2 levels | Order-of-magnitude only. Soil respiration dominates; absolute ppm is not trustworthy. |
+| CO2 levels | Order-of-magnitude only. `gasLeakPerH` (0.25 air changes per hour through lid seams) is tuned so a new jar sits in the low thousands of ppm while it decomposes its starting litter, then falls by day as plants draw it down. Calibrate with a CO2 logger. |
 | Mold growth and cap | Tuned so the bloom peaks in weeks 2 to 5, matching keeper reports |
 | All plant parameters | Estimated from qualitative care guidance |
 | Isopod and gnat reproduction | Estimated |

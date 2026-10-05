@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { care, createTerrarium, PRESETS, run, totalWaterG, type Setup } from '../src/index.js';
-import { thermalPerformance } from '../src/core/math.js';
+import { care, createTerrarium, PRESETS, run, totalWaterG, type Setup } from '../src/engine/index.js';
+import { thermalPerformance } from '../src/engine/core/math.js';
 
 const days = (n: number) => n * 24;
 const preset = (name: string): Setup => structuredClone(PRESETS[name]!);

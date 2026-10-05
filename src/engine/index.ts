@@ -5,3 +5,5 @@ export { createTerrarium, step, run, addPlant, addFauna, totalWaterG, type Setup
 export * as care from './sim/care.js';
 export { alerts, healthScore, snapshot } from './sim/health.js';
 export { PRESETS } from './presets.js';
+export * from './spec.js';
+export { geometry } from './environment/geometry.js';

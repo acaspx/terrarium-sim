@@ -1,7 +1,7 @@
 import { CONFIG } from '../core/config.js';
 import { clamp, lerp, satVaporDensity } from '../core/math.js';
 import type { Climate, TerrariumState } from '../core/types.js';
-import { geometry } from './geometry.js';
+import { geometry, substrateOf } from './geometry.js';
 
 export function co2Ppm(co2Mg: number, airL: number): number {
   return (co2Mg / (airL * CONFIG.co2MgPerLPer1000Ppm)) * 1000;
@@ -69,7 +69,7 @@ export function stepWater(s: TerrariumState, transpirationG: number): void {
   // Gravity drains anything above field capacity into the false bottom...
   const excess = p.substrateWaterG - g.fieldCapacityG;
   if (excess > 0) {
-    const drained = Math.min(excess * CONFIG.drainPerH, g.reservoirCapacityG - p.reservoirWaterG);
+    const drained = Math.min(excess * substrateOf(c).drainPerH, g.reservoirCapacityG - p.reservoirWaterG);
     p.substrateWaterG -= drained;
     p.reservoirWaterG += drained;
   }

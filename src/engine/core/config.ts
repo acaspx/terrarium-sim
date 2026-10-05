@@ -20,7 +20,7 @@ export const CONFIG = {
   drainPerH: 0.5,
   wickPerH: 0.01,
   /** Even "sealed" jars exchange a little gas through cork/lid seams. Air changes per hour. */
-  gasLeakPerH: 0.05,
+  gasLeakPerH: 0.25,
   ventAirChangesPerH: 4,
   ambientCo2Ppm: 420,
   co2HalfSatPpm: 150,

@@ -74,7 +74,23 @@ export interface FaunaState {
   adults: number;
 }
 
+/** Physical character of the growing medium. Different mixes hold and shed water very differently. */
+export interface SubstrateProps {
+  /** g water held per litre at field capacity. */
+  fieldCapacityGPerL: number;
+  /** Slow organic matter per litre (g dry): long-run CO2 and nitrogen supply. */
+  humusGPerL: number;
+  /** Plant-available nitrogen per litre at setup (mg). */
+  nutrientMgPerL: number;
+  /** Fraction of excess water that drains to the false bottom each hour. */
+  drainPerH: number;
+}
+
 export interface Container {
+  /** Footprint and proportion; default is a round jar 1.5x taller than wide. */
+  form?: 'round' | 'square';
+  aspect?: number;
+  substrate?: SubstrateProps;
   volumeL: number;
   substrateL: number;
   drainageL: number;
@@ -111,7 +127,7 @@ export interface Climate {
   condensationIndex: number;
 }
 
-export interface SimEvent { hour: number; type: string; message: string }
+export interface SimEvent { hour: number; type: string; message: string; subject?: string }
 
 export interface Alert { severity: 'info' | 'warn' | 'critical'; code: string; message: string; fix: string }
 
@@ -129,6 +145,8 @@ export interface TerrariumState {
   waterLostG: number;
   waterAddedG: number;
   waterloggedHours: number;
+  /** Counter for stable plant ids across save/load. */
+  nextId: number;
   /** Set by airOut(): restore this ventilation at this hour. */
   ventRevert?: { hour: number; ventilation: number };
 }

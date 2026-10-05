@@ -1,7 +1,7 @@
 import { CONFIG } from '../core/config.js';
 import type { Container, FaunaState, PlantState, TerrariumState } from '../core/types.js';
 import { stepGas, stepWater, updateClimate } from '../environment/climate.js';
-import { geometry } from '../environment/geometry.js';
+import { geometry, substrateOf } from '../environment/geometry.js';
 import { stepDecomposition } from '../organisms/decomposition.js';
 import { stepFauna } from '../organisms/fauna.js';
 import { stepPlants } from '../organisms/plants.js';
@@ -31,8 +31,8 @@ export function createTerrarium(setup: Setup): TerrariumState {
       condensationG: 0,
       co2Mg: (CONFIG.ambientCo2Ppm / 1000) * g.airL * CONFIG.co2MgPerLPer1000Ppm,
       detritusG: setup.initialDetritusG ?? 8 * setup.container.substrateL,
-      humusG: CONFIG.humusGPerL * setup.container.substrateL,
-      nutrientMg: 120 * setup.container.substrateL,
+      humusG: substrateOf(setup.container).humusGPerL * setup.container.substrateL,
+      nutrientMg: substrateOf(setup.container).nutrientMgPerL * setup.container.substrateL,
       moldG: CONFIG.mold.sporeFloorG,
     },
     plants: [],
@@ -42,6 +42,7 @@ export function createTerrarium(setup: Setup): TerrariumState {
     waterLostG: 0,
     waterAddedG: 0,
     waterloggedHours: 0,
+    nextId: 1,
   };
   for (const p of setup.plants ?? []) addPlant(s, p.speciesId, p.biomassG);
   for (const f of setup.fauna ?? []) addFauna(s, f.speciesId, f.count);
@@ -49,10 +50,9 @@ export function createTerrarium(setup: Setup): TerrariumState {
   return s;
 }
 
-let plantCounter = 0;
 export function addPlant(s: TerrariumState, speciesId: string, biomassG: number): PlantState {
   plantSpecies(speciesId); // validates
-  const pl: PlantState = { id: `${speciesId}-${++plantCounter}`, speciesId, biomassG, health: 1, turgor: 1, lightEma: 0.35 };
+  const pl: PlantState = { id: `${speciesId}-${s.nextId++}`, speciesId, biomassG, health: 1, turgor: 1, lightEma: 0.35 };
   s.plants.push(pl);
   return pl;
 }

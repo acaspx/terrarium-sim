@@ -86,7 +86,7 @@ export function stepPlants(s: TerrariumState): number {
   s.plants = s.plants.filter((pl) => {
     if (pl.health > 0 && pl.biomassG > 0.05) return true;
     p.detritusG += pl.biomassG * CONFIG.dryFraction;
-    s.events.push({ hour: s.hour, type: 'plant-death', message: `${plantSpecies(pl.speciesId).commonName} (${pl.id}) died.` });
+    s.events.push({ hour: s.hour, type: 'plant-death', message: `${plantSpecies(pl.speciesId).commonName} died.`, subject: pl.id });
     return false;
   });
   return transpiration;
