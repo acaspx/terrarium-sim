@@ -43,7 +43,9 @@ export function alerts(s: TerrariumState): Alert[] {
 /** 0-100 score for a dashboard. Weighted toward what keepers actually care about: living plants. */
 export function healthScore(s: TerrariumState): number {
   const { climate: cl, pools: p } = s;
-  const plants = s.plants.length ? s.plants.reduce((a, pl) => a + pl.health * (0.5 + 0.5 * pl.turgor), 0) / s.plants.length : 0;
+  // Dead plants count as zero: losing four of five plants is not a healthy jar.
+  const planted = Math.max(s.plants.length, s.planted ?? s.plants.length);
+  const plants = planted ? s.plants.reduce((a, pl) => a + pl.health * (0.5 + 0.5 * pl.turgor), 0) / planted : 0;
   const moisture = clamp(1 - Math.abs(cl.moisture - 0.7) / 0.4);
   const crew = s.fauna.some((f) => faunaSpecies(f.speciesId).role === 'cleanup' && f.adults > 5) ? 1 : 0;
   const mold = clamp(1 - p.moldG / (2 * VISIBLE_MOLD_G_PER_L * s.container.substrateL));

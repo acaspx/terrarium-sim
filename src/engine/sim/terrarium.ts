@@ -52,6 +52,7 @@ export function createTerrarium(setup: Setup): TerrariumState {
 
 export function addPlant(s: TerrariumState, speciesId: string, biomassG: number): PlantState {
   plantSpecies(speciesId); // validates
+  s.planted = (s.planted ?? 0) + 1;
   const pl: PlantState = { id: `${speciesId}-${s.nextId++}`, speciesId, biomassG, health: 1, turgor: 1, lightEma: 0.35 };
   s.plants.push(pl);
   return pl;

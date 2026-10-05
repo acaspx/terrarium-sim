@@ -147,6 +147,8 @@ export interface TerrariumState {
   waterloggedHours: number;
   /** Counter for stable plant ids across save/load. */
   nextId: number;
+  /** Plants ever added, so losses count against health. */
+  planted?: number;
   /** Set by airOut(): restore this ventilation at this hour. */
   ventRevert?: { hour: number; ventilation: number };
 }

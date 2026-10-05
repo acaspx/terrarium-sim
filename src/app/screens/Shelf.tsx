@@ -11,7 +11,13 @@ type View = 'shelf' | 'table';
 
 export function Shelf() {
   const store = useStore();
-  const [view, setView] = useState<View>(() => (localStorage.getItem('terrarium-sim:view') as View) ?? 'shelf');
+  const [view, setView] = useState<View>(() => {
+    try {
+      return (localStorage.getItem('terrarium-sim:view') as View) ?? 'shelf';
+    } catch {
+      return 'shelf';
+    }
+  });
   const changeView = (v: View) => {
     setView(v);
     try {

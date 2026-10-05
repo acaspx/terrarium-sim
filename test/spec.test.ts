@@ -48,4 +48,10 @@ describe('customization', () => {
     expect(bad.finalScore).toBeLessThan(good.finalScore - 20);
     expect(bad.plantsAlive).toBeLessThan(good.plantsAlive);
   });
+
+  it('counts dead plants against health', () => {
+    const sunny = forecast({ ...recipe('tropical-jar'), placement: 'south-window' }, 90);
+    expect(sunny.plantsAlive).toBeLessThan(sunny.plantsStart);
+    expect(sunny.finalScore).toBeLessThan(60);
+  });
 });
