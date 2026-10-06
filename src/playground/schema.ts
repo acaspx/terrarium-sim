@@ -47,6 +47,15 @@ export function cleanText(x: unknown, max: number): string {
   return x.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
+/** A planting position: two finite numbers, held inside the floor. */
+function position(x: unknown): [number, number] | undefined {
+  if (!Array.isArray(x) || x.length !== 2) return undefined;
+  const [u, v] = x.map(Number);
+  if (!Number.isFinite(u) || !Number.isFinite(v)) return undefined;
+  const c = (n: number) => Math.round(Math.max(-1, Math.min(1, n)) * 1000) / 1000;
+  return [c(u!), c(v!)];
+}
+
 const oneOf = <T extends string>(x: unknown, ids: readonly T[], what: string): T =>
   ids.includes(x as T) ? (x as T) : fail(`Unknown ${what}.`);
 
@@ -63,10 +72,14 @@ export function validateSpec(x: unknown): TerrariumSpec {
   const hardscape = [...new Set((o.hardscape as unknown[]).map((h) => oneOf(h, HARDSCAPE.map((x) => x.id), 'hardscape')))];
 
   if (!Array.isArray(o.plants) || o.plants.length === 0 || o.plants.length > LIMITS.plants) fail('A shared terrarium needs one to eight plants.');
-  const plants = (o.plants as Record<string, unknown>[]).map((p) => ({
-    speciesId: oneOf(p?.speciesId, PLANT_IDS, 'plant'),
-    size: oneOf(p?.size, PLANT_SIZES.map((s) => s.id), 'plant size'),
-  }));
+  const plants = (o.plants as Record<string, unknown>[]).map((p) => {
+    const at = position(p?.at);
+    return {
+      speciesId: oneOf(p?.speciesId, PLANT_IDS, 'plant'),
+      size: oneOf(p?.size, PLANT_SIZES.map((s) => s.id), 'plant size'),
+      ...(at ? { at } : {}),
+    };
+  });
 
   if (!Array.isArray(o.fauna)) fail('Bad clean-up crew.');
   const seen = new Set<string>();
@@ -127,7 +140,10 @@ export function conformState(spec: TerrariumSpec, input: unknown): TerrariumStat
   const plants = (Array.isArray(src.plants) ? src.plants : []).slice(0, LIMITS.plants * 2).flatMap((p, i) => {
     const pl = conform(plantShape, p);
     if (!PLANT_IDS.includes(pl.speciesId)) return [];
-    pl.id = cleanText(pl.id, 24) || `p${i}`;
+    pl.id = cleanText(pl.id, 40) || `p${i}`;
+    const at = position((p as { at?: unknown } | null)?.at);
+    if (at) pl.at = at;
+    else delete pl.at;
     pl.biomassG = Math.max(0, pl.biomassG);
     pl.health = Math.min(1, Math.max(0, pl.health));
     pl.turgor = Math.min(1, Math.max(0, pl.turgor));

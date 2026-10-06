@@ -2,6 +2,11 @@ export const clamp = (x: number, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, x)
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** Saturation vapour density of air in g/m^3 (Magnus formula). */
+/** Saturation vapour pressure, kPa (Magnus). */
+export function satVaporPressureKPa(tempC: number): number {
+  return 0.6112 * Math.exp((17.62 * tempC) / (243.12 + tempC));
+}
+
 export function satVaporDensity(tempC: number): number {
   const es = 6.112 * Math.exp((17.62 * tempC) / (243.12 + tempC)); // hPa
   return (216.7 * es) / (tempC + 273.15);

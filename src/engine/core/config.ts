@@ -39,6 +39,28 @@ export const CONFIG = {
   /** Fraction of decomposed carbon respired (rest becomes stable humus). */
   respiredFraction: 0.5,
   nitrogenMgPerGDetritus: 10,
+  /** pH units lost per g of organic matter decayed per litre of substrate (organic acids). */
+  acidPerGPerL: 0.02,
+  /** Daily pull of pH back toward the mix's own buffer value. */
+  pHBufferPerDay: 0.002,
+  /** Soil air relaxes toward its target: slowly when drowning, faster when draining. */
+  soilAirLossPerH: 1 / 18,
+  soilAirGainPerH: 1 / 6,
+  fungi: {
+    /** Mycelium growth per day at optimum, logistic toward the wood's capacity. */
+    growthPerDay: 0.15,
+    capPerGWood: 0.01,
+    /** Share of capacity present on day one (wood arrives already colonised). */
+    startShare: 0.02,
+    woodDecayPerDay: 0.0004,
+    /** Fruiting needs a well-colonised log, saturated air and wet wood. */
+    fruitAtShare: 0.5,
+    fruitMinRh: 0.9,
+    fruitMinMoisture: 0.55,
+    flushDays: 7,
+    restDays: 45,
+    mushroomPerGMycelium: 0.3,
+  },
   mold: {
     growthPerDay: 0.45,
     deathPerDay: 0.04,

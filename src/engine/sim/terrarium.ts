@@ -2,8 +2,10 @@ import { CONFIG } from '../core/config.js';
 import type { Container, FaunaState, PlantState, TerrariumState } from '../core/types.js';
 import { stepGas, stepWater, updateClimate } from '../environment/climate.js';
 import { geometry, substrateOf } from '../environment/geometry.js';
+import { initialSoil, stepSoil } from '../environment/soil.js';
 import { stepDecomposition } from '../organisms/decomposition.js';
 import { stepFauna } from '../organisms/fauna.js';
+import { stepFungi } from '../organisms/fungi.js';
 import { stepPlants } from '../organisms/plants.js';
 import { faunaSpecies, plantSpecies } from '../organisms/species.js';
 
@@ -14,7 +16,9 @@ export interface Setup {
   initialMoisture?: number;
   /** Fresh, easily rotted organic matter in a new build (g dry). Drives the first-month mold bloom. */
   initialDetritusG?: number;
-  plants?: { speciesId: string; biomassG: number }[];
+  /** Driftwood (g dry), the food of wood-rotting fungi. */
+  woodG?: number;
+  plants?: { speciesId: string; biomassG: number; at?: [number, number] }[];
   fauna?: { speciesId: string; count: number }[];
 }
 
@@ -34,6 +38,7 @@ export function createTerrarium(setup: Setup): TerrariumState {
       humusG: substrateOf(setup.container).humusGPerL * setup.container.substrateL,
       nutrientMg: substrateOf(setup.container).nutrientMgPerL * setup.container.substrateL,
       moldG: CONFIG.mold.sporeFloorG,
+      ...(setup.woodG ? { woodG: setup.woodG, mushroomG: 0 } : {}),
     },
     plants: [],
     fauna: [],
@@ -44,16 +49,22 @@ export function createTerrarium(setup: Setup): TerrariumState {
     waterloggedHours: 0,
     nextId: 1,
   };
-  for (const p of setup.plants ?? []) addPlant(s, p.speciesId, p.biomassG);
+  for (const p of setup.plants ?? []) addPlant(s, p.speciesId, p.biomassG, p.at);
   for (const f of setup.fauna ?? []) addFauna(s, f.speciesId, f.count);
   s.climate = updateClimate(s);
+  s.soil = initialSoil(s, s.climate.moisture);
+  if (setup.woodG) {
+    s.fungi = { flushStartHour: -1, lastFlushHour: -1e6 };
+    s.pools.myceliumG = CONFIG.fungi.startShare * CONFIG.fungi.capPerGWood * setup.woodG;
+  }
   return s;
 }
 
-export function addPlant(s: TerrariumState, speciesId: string, biomassG: number): PlantState {
+export function addPlant(s: TerrariumState, speciesId: string, biomassG: number, at?: [number, number]): PlantState {
   plantSpecies(speciesId); // validates
   s.planted = (s.planted ?? 0) + 1;
   const pl: PlantState = { id: `${speciesId}-${s.nextId++}`, speciesId, biomassG, health: 1, turgor: 1, lightEma: 0.35 };
+  if (at) pl.at = [at[0], at[1]];
   s.plants.push(pl);
   return pl;
 }
@@ -79,7 +90,9 @@ export function step(s: TerrariumState): void {
   s.climate = updateClimate(s);
   const transpiration = stepPlants(s);
   stepFauna(s);
-  stepDecomposition(s);
+  const decayed = stepDecomposition(s);
+  stepFungi(s);
+  stepSoil(s, decayed);
   stepWater(s, transpiration);
   stepGas(s);
   s.hour += 1;

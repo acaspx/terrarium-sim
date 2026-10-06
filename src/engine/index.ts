@@ -7,3 +7,5 @@ export { alerts, healthScore, snapshot } from './sim/health.js';
 export { PRESETS } from './presets.js';
 export * from './spec.js';
 export { geometry } from './environment/geometry.js';
+export { dli } from './environment/climate.js';
+export { plantHeightCm, shading } from './organisms/plants.js';
