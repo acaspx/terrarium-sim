@@ -1,6 +1,6 @@
 # Model
 
-One step is one hour. Order: climate -> plants -> animals -> decomposition -> water -> gas.
+One step is one hour. Order: climate -> plants -> animals -> decomposition -> fungi -> soil -> water -> gas.
 
 ## Pools
 
@@ -12,6 +12,9 @@ One step is one hour. Order: climate -> plants -> animals -> decomposition -> wa
 | humus | g dry | The substrate's own slow-rotting organic matter |
 | nutrient | mg N | Plant-available nitrogen |
 | mold | g | Visible fungal mass |
+| wood, mycelium, mushroom | g | Driftwood (dry), the fungus living in it, and mushrooms standing now (fresh). Only when the jar has driftwood. |
+
+Beside the pools, `soil` holds pH and air (0 sour to 1 open), and each plant has a position `at` (u, v in -1..1 across the floor).
 
 ## Climate and water
 
@@ -30,6 +33,8 @@ Growth = max rate x **min**(light, water, temperature, humidity) x CO2 x nitroge
 - **Turgor** (fast) and **health** (slow) are separate. Turgor is what you see day to day; health is accumulated damage. A plant that wilts and is watered in time loses nothing; one left wilted loses health daily.
 - Plants shed litter continuously, and dead plants become detritus.
 - Total canopy is capped by container volume, so fast growers crowd out slow ones.
+- **Shade:** each plant stands `heightCm x sqrt(size)` tall and shades a circle about as wide as it is tall. A shorter plant inside it loses light in proportion to the overlap and to how much the other towers over it (at most 70%). It only matters where light is limiting: under a bright grow light a shaded moss is still saturated.
+- **pH:** growth runs at full speed inside the species' pH range and slows to 40% well outside it. pH never kills a plant on its own.
 
 ## Animals
 
@@ -54,6 +59,22 @@ Each species is three numbers: eggs, juveniles, adults.
 - A new build starts with a pulse of fresh detritus, which is why every new jar blooms.
 - Spores never reach zero, so mold returns whenever conditions and food allow.
 - Background microbes decay detritus (fast) and humus (slow) into CO2 and nitrogen. Humus is what keeps a sealed jar fed for years.
+- Decay is slower when the soil is short of air (down to 35% when sour).
+
+## Soil
+
+- **pH** starts at the mix's value (ABG 5.8, bioactive 6.3, peat 4.2, potting soil 6.2). Organic acids from decay lower it; the mix's own minerals pull it back slowly. A typical jar drifts down 0.2 to 0.3 in a year.
+- **Air** follows moisture: open below field capacity, gone at saturation. It drains away over about a day and returns within hours. Below 0.3 the jar raises a "sour soil" alert.
+
+## Fungi
+
+- Driftwood arrives already holding mycelium (2% of what it can support). In moist, humid, still conditions it spreads logistically through the wood, slowly rotting it into CO2 and nitrogen.
+- When the wood is half colonised, the air is above 90% RH and the soil is wet, there is a daily chance of a flush: mushrooms grow over three days, stand for a week, then collapse into the litter. Fruiting spends half the mycelium, and it rests at least six weeks before fruiting again.
+
+## Derived readings
+
+- **VPD** (kPa) = saturation vapour pressure at air temperature x (1 - RH). Sealed jars sit near 0.1.
+- **DLI** (mol/m2/day) = PPFD x photoperiod x 3600 / 10^6.
 
 ## Calibration: what is still a guess
 
@@ -68,10 +89,13 @@ Constants live in `src/core/config.ts`; species numbers in `src/organisms/specie
 | Mold growth and cap | Tuned so the bloom peaks in weeks 2 to 5, matching keeper reports |
 | All plant parameters | Estimated from qualitative care guidance |
 | Isopod and gnat reproduction | Estimated |
+| Plant heights, shade reach and depth | Estimated |
+| pH ranges per plant, acidification and buffering rates | Estimated; starting pH of each mix is typical of its ingredients |
+| Fungal growth, fruiting thresholds and flush timing | Estimated, tuned so a humid jar with wood sees mushrooms within its first two or three months |
 
 ## Known limits
 
-- No space: one well-mixed jar, no wet and dry corners, no climbing, no shading between plants.
+- Space only for light: plants have positions and shade each other, but water, air and mold are still one well-mixed jar (no wet and dry corners).
 - No seasons unless you change the room settings.
 - Populations are continuous numbers, so very small colonies do not fluctuate randomly.
 - Charcoal has no modelled effect (its benefit is debated and I found no quantitative basis).

@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { makeRng } from '../../engine/core/math.js';
 import {
-  geometry, plantSpecies, SUBSTRATES,
+  autoLayout, geometry, plantSpecies, SUBSTRATES,
   type LidId, type TerrariumSpec, type TerrariumState, type VesselId,
 } from '../../engine/index.js';
 
@@ -59,6 +59,8 @@ const PLANT_COLORS: Record<string, { leaf: string; accent: string }> = {
   'spike-moss': { leaf: '#7fa84a', accent: '#5f8a34' },
   'cushion-moss': { leaf: '#8cae7c', accent: '#a9c39a' },
   'maidenhair-fern': { leaf: '#79ac58', accent: '#2a231e' },
+  'birds-nest-fern': { leaf: '#86b84c', accent: '#3a2a1e' },
+  'lemon-button-fern': { leaf: '#93bf52', accent: '#6f8f3a' },
 };
 const DYING = '#9b8650';
 
@@ -232,6 +234,52 @@ function maidenhair(p: PlantDraw): ReactNode {
   return out;
 }
 
+function birdsNest(p: PlantDraw): ReactNode {
+  const n = 5 + Math.round(p.scale * 7);
+  const out: ReactNode[] = [];
+  for (let i = 0; i < n; i++) {
+    const spread = -55 + (110 * (i + 0.5)) / n + (p.rng() - 0.5) * 10;
+    const a = ((spread * (1 + (1 - p.turgor) * 0.8)) * Math.PI) / 180;
+    const len = (14 + 34 * p.scale) * (0.8 + 0.25 * p.rng());
+    const deg = (a * 180) / Math.PI;
+    out.push(
+      <g key={i} transform={`rotate(${deg} ${p.x} ${p.gy})`}>
+        <ellipse cx={p.x} cy={p.gy - len / 2} rx={3 + 2 * p.scale} ry={len / 2} fill={p.leaf} />
+        <line x1={p.x} y1={p.gy} x2={p.x} y2={p.gy - len * 0.95} stroke={p.accent} strokeWidth={0.8} />
+      </g>,
+    );
+  }
+  out.push(<ellipse key="crown" cx={p.x} cy={p.gy - 1} rx={3} ry={1.6} fill="#4a3324" />);
+  return out;
+}
+
+function lemonButton(p: PlantDraw): ReactNode {
+  const n = 4 + Math.round(4 * p.scale);
+  const out: ReactNode[] = [];
+  for (let i = 0; i < n; i++) {
+    const dir = i % 2 ? 1 : -1;
+    const ht = (14 + 30 * p.scale) * (0.75 + 0.3 * p.rng());
+    const bend = (3 + 8 * p.rng() + (1 - p.turgor) * 14) * dir;
+    const ex = p.x + bend;
+    const ey = p.gy - ht * (0.75 + 0.25 * p.turgor);
+    const leaves: ReactNode[] = [];
+    for (let t = 0.15; t <= 1.001; t += 0.1) {
+      const bx = p.x + (ex - p.x) * t * t;
+      const by = p.gy + (ey - p.gy) * t;
+      const r = 2.2 - t;
+      leaves.push(<circle key={`l${t}`} cx={bx - 2.4} cy={by} r={r} fill={p.leaf} />);
+      leaves.push(<circle key={`r${t}`} cx={bx + 2.4} cy={by} r={r} fill={p.leaf} />);
+    }
+    out.push(
+      <g key={i}>
+        <path d={`M${p.x},${p.gy} Q${p.x},${ey} ${ex},${ey}`} stroke={p.accent} strokeWidth={0.8} fill="none" />
+        {leaves}
+      </g>,
+    );
+  }
+  return out;
+}
+
 const DRAW: Record<string, (p: PlantDraw) => ReactNode> = {
   fittonia,
   'creeping-fig': creepingFig,
@@ -239,9 +287,9 @@ const DRAW: Record<string, (p: PlantDraw) => ReactNode> = {
   'spike-moss': spikeMoss,
   'cushion-moss': cushionMoss,
   'maidenhair-fern': maidenhair,
+  'birds-nest-fern': birdsNest,
+  'lemon-button-fern': lemonButton,
 };
-// Taller plants at the back, ground covers in front.
-const DEPTH_ORDER = ['maidenhair-fern', 'fittonia', 'creeping-fig', 'spike-moss', 'baby-tears-pilea', 'cushion-moss'];
 
 // ------------------------------------------------------------------ lids
 
@@ -313,13 +361,14 @@ export function Jar({ spec, state, lively = false, className, title }: JarProps)
   const litter = spec.hardscape.includes('leaf-litter') ? clamp(state.pools.detritusG / (state.container.substrateL * 9)) : 0;
 
   const rng = makeRng(hashSeed(spec.name + spec.seed));
-  const plants = [...state.plants].sort((a, b) => DEPTH_ORDER.indexOf(a.speciesId) - DEPTH_ORDER.indexOf(b.speciesId));
-  const slots = plants.map((pl, i) => {
-    const r = makeRng(hashSeed(pl.id));
-    const span = gr - gl - 30;
-    const x = gl + 15 + (span * (i + 0.5)) / Math.max(1, plants.length) + (r() - 0.5) * 14;
-    return { pl, x, r };
-  });
+  // The same layout as the simulation and the 3D jar: u across, v front to back. Draw back to front.
+  const auto = autoLayout(state.plants, spec.seed);
+  const slots = state.plants
+    .map((pl, i) => {
+      const [u, v] = pl.at ?? auto[i]!;
+      return { pl, x: (gl + gr) / 2 + u * ((gr - gl) / 2 - 15), v, r: makeRng(hashSeed(pl.id)) };
+    })
+    .sort((a, b) => a.v - b.v);
 
   const droplets = (() => {
     const out: ReactNode[] = [];
@@ -356,6 +405,22 @@ export function Jar({ spec, state, lively = false, className, title }: JarProps)
           <g key={`w${i}`}>
             <ellipse cx={x} cy={gy - 2} rx={4.6} ry={2.5} fill="#5d6268" />
             <path d={`M${x - 2},${gy - 4.2} L${x - 2},${gy - 0.2} M${x},${gy - 4.5} L${x},${gy} M${x + 2},${gy - 4.2} L${x + 2},${gy - 0.2}`} stroke="#43474c" strokeWidth={0.5} />
+          </g>,
+        );
+      }
+    } else if (f.speciesId.endsWith('-isopod')) {
+      // Isopod morphs: bigger, coloured, mostly out at night.
+      const look: Record<string, [string, string]> = {
+        'dairy-cow-isopod': ['#f2f0ea', '#1c1c1c'], 'rubber-ducky-isopod': ['#5f5750', '#f2c230'], 'magic-potion-isopod': ['#46526b', '#e08a3c'],
+      };
+      const [body, mark] = look[f.speciesId] ?? ['#8a8a84', '#5d6268'];
+      const n = Math.round(Math.min(8, Math.ceil(pop / 2)) * (cl.lightOn ? 0.5 : 1));
+      for (let i = 0; i < n; i++) {
+        const x = gl + 10 + r() * (gr - gl - 20);
+        faunaDots.push(
+          <g key={`${f.speciesId}${i}`}>
+            <ellipse cx={x} cy={gy - 2} rx={4} ry={2.3} fill={body} />
+            <circle cx={x + 3} cy={gy - 2.2} r={1.2} fill={mark} />
           </g>,
         );
       }
@@ -446,6 +511,17 @@ export function Jar({ spec, state, lively = false, className, title }: JarProps)
           return <ellipse key={i} cx={x} cy={gy - 0.5} rx={4} ry={1.4} fill={i % 2 ? '#8a5a2b' : '#a0703a'} transform={`rotate(${rng() * 40 - 20} ${x} ${gy})`} />;
         })}
         {moldBlobs}
+        {/* a flush of mushrooms on the driftwood */}
+        {(state.pools.mushroomG ?? 0) > 0 && Array.from({ length: Math.min(6, Math.ceil((state.pools.mushroomG ?? 0) * 20)) }, (_, i) => {
+          const x = gl + 18 + i * 9;
+          const y = gy - 6 - i * 3.5;
+          return (
+            <g key={`m${i}`}>
+              <line x1={x} y1={y} x2={x} y2={y - 5} stroke="#efe6d6" strokeWidth={1.4} />
+              <path d={`M${x - 3.5},${y - 5} Q${x},${y - 9.5} ${x + 3.5},${y - 5} Z`} fill="#b98d5c" />
+            </g>
+          );
+        })}
         {faunaDots}
 
         {/* the film of water on the glass */}

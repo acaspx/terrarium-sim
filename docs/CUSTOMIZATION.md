@@ -36,10 +36,10 @@ Builders end with a shopping list. Trackers start once the jar exists and record
 | 0. Pick | Choose a recipe and plant it | Yes |
 | 1. Swap | Change parts of a recipe | Yes |
 | 2. Compose | Build from blank with curated options | Yes |
-| 3. Arrange | Place plants and hardscape by hand, sculpt the substrate | No |
+| 3. Arrange | Place plants and hardscape by hand, sculpt the substrate | Plants, in the 3D builder. Placement changes the simulation through shade. Hardscape and sculpting not yet. |
 | 4. Fabricate | Custom dimensions, backgrounds, misters, fans, lighting spectrum | No |
 
-v1 stops at level 2. Levels 3 and 4 add a lot of interface without changing what the simulation can model, since it treats the jar as one well-mixed space.
+v1 stopped at level 2 because the jar was one well-mixed space, so placement would have been decorative. Plants now have positions and shade each other, which makes arranging them a real choice.
 
 ### What v1 lets you choose, and what each choice changes
 
@@ -71,7 +71,7 @@ v1 stops at level 2. Levels 3 and 4 add a lot of interface without changing what
 | Later | Why not now |
 |---|---|
 | Open and arid terrariums with succulents | Needs arid species in the catalog |
-| Drag-to-place layout | The model has no space yet; placement would be decorative |
+| Drag-to-place hardscape, sculpted substrate | Plants can be placed now (they shade each other); wood and stone positions have no modelled effect yet |
 | Backgrounds, misting systems, fans | Vivarium hardware; matters once animals beyond microfauna are added |
 | Frogs, geckos, other display animals | Large bioload and welfare responsibilities; needs feeding and waste modelling |
 | Shopping lists and vendor links | A business decision, not a modelling one |

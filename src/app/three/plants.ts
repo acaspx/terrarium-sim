@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { fittoniaTexture, lumpTexture } from './textures.js';
+import { fittoniaTexture, lumpTexture, strapLeafTexture } from './textures.js';
 
 /**
  * Plants built from simulation state, in local units: origin at the base of
@@ -194,6 +194,8 @@ const glossyLeafMat = () =>
   shared('leaf-gloss', () => new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.35, clearcoat: 0.4, clearcoatRoughness: 0.4, side: THREE.DoubleSide }));
 const fittoniaMat = () =>
   shared('fittonia', () => new THREE.MeshPhysicalMaterial({ map: fittoniaTexture(), color: 0xffffff, roughness: 0.42, clearcoat: 0.25, clearcoatRoughness: 0.5, side: THREE.DoubleSide }));
+const strapMat = () =>
+  shared('strap', () => new THREE.MeshPhysicalMaterial({ map: strapLeafTexture(), color: 0xffffff, roughness: 0.3, clearcoat: 0.5, clearcoatRoughness: 0.3, side: THREE.DoubleSide }));
 const stemMat = (hex: string) =>
   shared(`stem-${hex}`, () => new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.7 }));
 const tuftMat = () =>
@@ -418,6 +420,64 @@ function maidenhair(p: PlantInput): Part[] {
   ];
 }
 
+function birdsNestFern(p: PlantInput): Part[] {
+  const n = 5 + Math.round(p.s * 9);
+  const fronds: Part['instances'] = [];
+  for (let i = 0; i < n; i++) {
+    const young = i / n; // later fronds come up from the centre, more upright
+    const az = i * 2.39996 + p.rng() * 0.4;
+    const tilt = 0.75 - 0.5 * young + (1 - p.turgor) * 0.7 + (p.rng() - 0.5) * 0.15;
+    fronds.push({
+      matrix: at(new THREE.Vector3(0, 0.01, 0), tilt, az, (p.rng() - 0.5) * 0.3, (0.55 + 0.75 * p.s) * (0.8 + 0.35 * p.rng()) * (0.75 + 0.25 * (1 - young))),
+      color: tinted(p.leaf, p.health, p.rng, 0.06),
+    });
+  }
+  return [
+    { geometry: leafGeometry(0.3, 0.07, 0.35, 0.18, 'narrow'), material: strapMat(), instances: fronds, owned: false },
+    // The nest: a brown, hairy crown at the base.
+    { geometry: crownGeometry(), material: stemMat('#4a3324'), owned: false },
+  ];
+}
+
+let _crown: THREE.BufferGeometry | null = null;
+function crownGeometry() {
+  if (!_crown) {
+    _crown = new THREE.SphereGeometry(0.022, 12, 8);
+    _crown.scale(1, 0.6, 1);
+  }
+  return _crown;
+}
+
+function lemonButtonFern(p: PlantInput): Part[] {
+  const n = 4 + Math.round(6 * p.s);
+  const leaves: Part['instances'] = [];
+  const stems: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < n; i++) {
+    const az = (i / n) * Math.PI * 2 + p.rng() * 0.7;
+    const dx = Math.sin(az);
+    const dz = Math.cos(az);
+    const ht = (0.1 + 0.26 * p.s) * (0.75 + 0.3 * p.rng());
+    const lean = 0.03 + 0.05 * p.rng() + (1 - p.turgor) * 0.15;
+    const p0 = new THREE.Vector3(0, 0, 0);
+    const p1 = new THREE.Vector3(dx * lean * 0.3, ht, dz * lean * 0.3);
+    const p2 = new THREE.Vector3(dx * lean * 2, ht * (0.75 + 0.25 * p.turgor), dz * lean * 2);
+    stems.push(taperedTube([p0, bezier(p0, p1, p2, 0.35), bezier(p0, p1, p2, 0.7), p2], 0.003, 0.0015, 12, 4));
+    for (let t = 0.12; t <= 1.001; t += 0.06) {
+      const b = bezier(p0, p1, p2, t);
+      for (const side of [-1, 1]) {
+        leaves.push({
+          matrix: at(b, 1.2 + (1 - p.turgor) * 0.3, az + side * (Math.PI / 2), side * 0.3, (1.15 - 0.6 * t) * (0.9 + 0.2 * p.rng())),
+          color: tinted(p.leaf, p.health, p.rng, 0.08),
+        });
+      }
+    }
+  }
+  return [
+    { geometry: mergeAll(stems), material: stemMat(stemColor(p.accent, p.health)), owned: true },
+    { geometry: leafGeometry(0.02, 0.018, 0.05, 0.25, 'round'), material: leafMat(), instances: leaves, owned: false },
+  ];
+}
+
 export const BUILDERS: Record<string, (p: PlantInput) => Part[]> = {
   fittonia,
   'creeping-fig': creepingFig,
@@ -425,6 +485,8 @@ export const BUILDERS: Record<string, (p: PlantInput) => Part[]> = {
   'spike-moss': spikeMoss,
   'cushion-moss': cushionMoss,
   'maidenhair-fern': maidenhair,
+  'birds-nest-fern': birdsNestFern,
+  'lemon-button-fern': lemonButtonFern,
 };
 
 export const PLANT_COLORS: Record<string, { leaf: string; accent: string }> = {
@@ -434,16 +496,8 @@ export const PLANT_COLORS: Record<string, { leaf: string; accent: string }> = {
   'spike-moss': { leaf: '#7fa84a', accent: '#5f8a34' },
   'cushion-moss': { leaf: '#6f9a5a', accent: '#9cbc84' },
   'maidenhair-fern': { leaf: '#79ac58', accent: '#2a231e' },
-};
-
-/** Taller plants at the back, ground covers at the front. */
-export const DEPTH: Record<string, number> = {
-  'maidenhair-fern': -0.55,
-  fittonia: -0.15,
-  'creeping-fig': -0.3,
-  'spike-moss': 0.15,
-  'baby-tears-pilea': 0.35,
-  'cushion-moss': 0.45,
+  'birds-nest-fern': { leaf: '#86b84c', accent: '#3a2a1e' },
+  'lemon-button-fern': { leaf: '#93bf52', accent: '#6f8f3a' },
 };
 
 export function leafLitterGeometry() {

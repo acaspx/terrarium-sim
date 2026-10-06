@@ -32,13 +32,15 @@ export interface Jar3DProps {
   lively?: boolean;
   autoRotate?: boolean;
   title?: string;
+  /** Lets the plants be dragged into place (3D only). */
+  onArrange?: (plantId: string, at: [number, number]) => void;
 }
 
 /**
  * The 3D terrarium, loaded on demand. Falls back to the drawn jar while three.js
  * loads, and for good when the browser has no WebGL 2.
  */
-export function Jar3D({ spec, state, lively = true, autoRotate, title }: Jar3DProps) {
+export function Jar3D({ spec, state, lively = true, autoRotate, title, onArrange }: Jar3DProps) {
   const flat = (
     <div className="jar3d jar3d-flat">
       <Jar spec={spec} state={state} lively={lively} title={title} />
@@ -48,7 +50,7 @@ export function Jar3D({ spec, state, lively = true, autoRotate, title }: Jar3DPr
   return (
     <Fallback fallback={flat}>
       <Suspense fallback={flat}>
-        <Terrarium3D spec={spec} state={state} lively={lively} autoRotate={autoRotate} label={title} />
+        <Terrarium3D spec={spec} state={state} lively={lively} autoRotate={autoRotate} label={title} onArrange={onArrange} />
       </Suspense>
     </Fallback>
   );

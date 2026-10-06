@@ -50,6 +50,7 @@ const MAX_STEPS_PER_FRAME = 24 * 14;
 const ALERT_CLEARED: Record<string, string> = {
   'mold-bloom': 'The mold bloom has cleared.',
   waterlogged: 'The substrate has drained.',
+  'sour-soil': 'Air is back in the soil.',
   'too-dry': 'Moisture is back in range.',
   overheating: 'The temperature is back to normal.',
 };

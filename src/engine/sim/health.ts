@@ -15,6 +15,8 @@ export function alerts(s: TerrariumState): Alert[] {
     out.push({ severity: 'critical', code: 'waterlogged', message: 'Substrate has been saturated for over two days. Roots are rotting.', fix: 'Take the lid off for a day or two and stop watering.' });
   else if (cl.moisture > 0.95)
     out.push({ severity: 'warn', code: 'too-wet', message: 'Substrate is at saturation.', fix: 'Air out for a few hours.' });
+  else if (s.soil && s.soil.air < 0.3)
+    out.push({ severity: 'warn', code: 'sour-soil', message: 'The soil is short of air and starting to sour.', fix: 'Leave the lid off for a few hours and hold off on water.' });
   if (cl.moisture < 0.35)
     out.push({ severity: cl.moisture < 0.25 ? 'critical' : 'warn', code: 'too-dry', message: 'Substrate is drying out and there is little condensation.', fix: 'Mist lightly and close the lid.' });
   if (cl.condensationIndex > 1)

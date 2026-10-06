@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Droplets, Eraser, Leaf, Scissors, Share2, Wind } from 'lucide-react';
 import {
-  alerts, faunaSpecies, healthScore, LIDS, PLACEMENTS, GROW_LIGHTS, lightFor, plantSpecies, VESSELS,
+  alerts, dli, faunaSpecies, healthScore, LIDS, PLACEMENTS, GROW_LIGHTS, lightFor, plantSpecies, VESSELS,
   type Alert, type LidId, type PlacementId, type TerrariumState,
 } from '../../engine/index.js';
 import { Jar3D } from '../jar/Jar3D.js';
-import { clockOf, dayOf, glassWord, headline, moistureWord, plantStatus } from '../format.js';
+import { clockOf, dayOf, glassWord, headline, moistureWord, pHWord, plantStatus, soilAirWord, vpdWord } from '../format.js';
 import { care, store, useStore, type JarRecord } from '../store.js';
 import { Meter, Segmented, Sparkline } from '../ui/controls.js';
 import { share, sharedFrom } from '../playground.js';
@@ -105,6 +105,30 @@ function Conditions({ s, history: j }: { s: TerrariumState; history: JarRecord }
           <dt>CO₂</dt>
           <dd>{Math.round(cl.co2Ppm).toLocaleString()}<span className="unit"> ppm</span></dd>
           <Meter value={Math.min(1, cl.co2Ppm / 5000)} label="Carbon dioxide" />
+        </div>
+        {s.soil && (
+          <>
+            <div>
+              <dt>Soil pH</dt>
+              <dd>{s.soil.pH.toFixed(1)}<span className="unit"> {pHWord(s.soil.pH).toLowerCase()}</span></dd>
+              <Meter value={(s.soil.pH - 3.5) / 5} band={[(5.5 - 3.5) / 5, (7 - 3.5) / 5]} label="Soil pH, 3.5 to 8.5" />
+            </div>
+            <div>
+              <dt>Soil air</dt>
+              <dd>{soilAirWord(s.soil.air)}</dd>
+              <Meter value={s.soil.air} band={[0.6, 1]} label="Air in the soil, sour to open" />
+            </div>
+          </>
+        )}
+        <div>
+          <dt>VPD</dt>
+          <dd>{(cl.vpdKPa ?? 0).toFixed(2)}<span className="unit"> kPa</span></dd>
+          <Meter value={Math.min(1, (cl.vpdKPa ?? 0) / 1.5)} band={[0, 0.6 / 1.5]} label={`Vapour pressure deficit: ${vpdWord(cl.vpdKPa ?? 0).toLowerCase()}`} />
+        </div>
+        <div>
+          <dt>Daily light</dt>
+          <dd>{dli(s.container).toFixed(1)}<span className="unit"> mol/m²</span></dd>
+          <Meter value={Math.min(1, dli(s.container) / 15)} band={[2 / 15, 8 / 15]} label="Daily light integral" />
         </div>
       </dl>
       {last.length > 2 && (
@@ -234,6 +258,7 @@ function Plants({ j }: { j: JarRecord }) {
                 <div className="roster-name">
                   <span>{sp.commonName}</span>
                   <span className="roster-sci">{sp.scientificName}</span>
+                  {(p.shade ?? 0) >= 0.2 && <span className="roster-note">In a taller plant's shade, losing {Math.round(p.shade! * 100)}% of its light</span>}
                 </div>
                 <span className={`pill tone-${st.tone}`}>{st.word}</span>
                 <div className="roster-meter">

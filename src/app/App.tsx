@@ -19,7 +19,7 @@ export function App() {
 
   const path = route.split('?')[0]!;
   let screen;
-  if (path.startsWith('/jar/')) screen = <Detail id={path.slice(5)} />;
+  if (path.startsWith('/jar/')) screen = <Detail key={path} id={path.slice(5)} />;
   else if (path.startsWith('/playground/')) screen = <SharedJar key={path} id={path.slice(12)} />;
   else if (path === '/playground') screen = <Playground />;
   else if (path === '/new') screen = <Builder key={route} />;

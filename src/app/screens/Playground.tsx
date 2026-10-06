@@ -5,7 +5,7 @@ import {
 } from '../../engine/index.js';
 import { Jar } from '../jar/Jar.js';
 import { Jar3D } from '../jar/Jar3D.js';
-import { glassWord, headline, moistureWord, plural, pluralName } from '../format.js';
+import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
 import { getShared, hasLiked, isMine, like, listShared, plantCopy, report, unshare, type Submission } from '../playground.js';
 import { Segmented } from '../ui/controls.js';
 
@@ -229,7 +229,10 @@ export function SharedJar({ id }: { id: string }) {
               <div><dt>Humidity</dt><dd>{Math.round(cl.rh * 100)}<span className="unit">%</span></dd></div>
               <div><dt>Air</dt><dd>{cl.airTempC.toFixed(1)}<span className="unit">°C</span></dd></div>
               <div><dt>Glass</dt><dd>{glassWord(cl.condensationIndex)}</dd></div>
+              {st.soil && <div><dt>Soil pH</dt><dd>{st.soil.pH.toFixed(1)}<span className="unit"> {pHWord(st.soil.pH).toLowerCase()}</span></dd></div>}
+              {st.soil && <div><dt>Soil air</dt><dd>{soilAirWord(st.soil.air)}</dd></div>}
             </dl>
+            {(st.pools.mushroomG ?? 0) > 0 && <p className="note">Mushrooms are up on the driftwood.</p>}
           </section>
 
           <section className="block" aria-labelledby="living">

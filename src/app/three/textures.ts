@@ -272,3 +272,54 @@ export function lumpTexture() {
     ctx.putImageData(img, 0, 0);
   }, false);
 }
+
+/** Bird's nest fern frond: pale enough to tint per leaf, with the dark midrib it is known for. */
+export function strapLeafTexture() {
+  return paint('strap-leaf', 128, (ctx, n) => {
+    const g = ctx.createLinearGradient(0, 0, n, 0);
+    g.addColorStop(0, '#d9e6cf');
+    g.addColorStop(0.42, '#ffffff');
+    g.addColorStop(0.58, '#ffffff');
+    g.addColorStop(1, '#d9e6cf');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, n, n);
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    for (let y = 4; y < n; y += 5) {
+      ctx.beginPath();
+      ctx.moveTo(n / 2, y + 6);
+      ctx.lineTo(4, y);
+      ctx.moveTo(n / 2, y + 6);
+      ctx.lineTo(n - 4, y);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#3a2a1e';
+    ctx.fillRect(n / 2 - 3, 0, 6, n);
+  });
+}
+
+/** Isopod shells, painted onto the body. */
+export function shellTexture(kind: 'dairy-cow' | 'magic-potion') {
+  return paint(`shell-${kind}`, 128, (ctx, n) => {
+    const r = rng(kind.length * 7);
+    ctx.fillStyle = kind === 'dairy-cow' ? '#f2f0ea' : '#46526b';
+    ctx.fillRect(0, 0, n, n);
+    for (let i = 0; i < (kind === 'dairy-cow' ? 9 : 90); i++) {
+      const x = r() * n;
+      const y = r() * n;
+      ctx.fillStyle = kind === 'dairy-cow' ? '#1c1c1c' : r() < 0.6 ? '#e08a3c' : '#f1b25c';
+      ctx.beginPath();
+      if (kind === 'dairy-cow') ctx.ellipse(x, y, 8 + r() * 16, 6 + r() * 12, r() * 3, 0, Math.PI * 2);
+      else ctx.arc(x, y, 1 + r() * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Segment lines across the back.
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    for (let x = 6; x < n; x += 11) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, n);
+      ctx.stroke();
+    }
+  });
+}

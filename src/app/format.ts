@@ -21,6 +21,29 @@ export function moistureWord(m: number) {
   return 'Saturated';
 }
 
+export function pHWord(pH: number) {
+  if (pH < 4.5) return 'Very acid';
+  if (pH < 5.5) return 'Acid';
+  if (pH < 6.5) return 'Slightly acid';
+  if (pH <= 7.3) return 'Neutral';
+  return 'Alkaline';
+}
+
+/** Soil air, 1 open to 0 sour. */
+export function soilAirWord(air: number) {
+  if (air > 0.6) return 'Open';
+  if (air > 0.3) return 'Close';
+  return 'Sour';
+}
+
+/** Vapour pressure deficit as keepers talk about it: low is humid and still, high pulls water from leaves. */
+export function vpdWord(kPa: number) {
+  if (kPa < 0.2) return 'Saturated';
+  if (kPa < 0.6) return 'Humid';
+  if (kPa < 1.2) return 'Moderate';
+  return 'Drying';
+}
+
 export function plantStatus(p: { health: number; turgor: number }) {
   if (p.health < 0.4) return { word: 'Declining', tone: 'critical' as const };
   if (p.turgor < 0.4) return { word: 'Wilting', tone: 'warn' as const };
