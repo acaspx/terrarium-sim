@@ -1,0 +1,774 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
+import * as THREE from 'three';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { makeRng } from '../../engine/core/math.js';
+import { geometry as jarGeometry, plantSpecies, PLANT_IDS, type TerrariumSpec, type TerrariumState } from '../../engine/index.js';
+import { condensationMaterial } from './condensation.js';
+import { clamp, fbm, hashSeed } from './noise.js';
+import { BUILDERS, DEPTH, leafLitterGeometry, PLANT_COLORS, taperedTube, type Part } from './plants.js';
+import { barkTexture, corkTexture, lumpTexture, moldTexture, shelfTexture, soilTexture } from './textures.js';
+import {
+  distToWall, footprint, glassGeometry, groundGeometry, insideFp, layerGeometry, pointIn, SHAPES,
+  type Footprint, type Shape,
+} from './vessel.js';
+
+export interface Terrarium3DProps {
+  spec: TerrariumSpec;
+  state: TerrariumState;
+  /** Springtails hop, isopods wander, gnats drift, drips run. */
+  lively?: boolean;
+  autoRotate?: boolean;
+  className?: string;
+  label?: string;
+}
+
+/**
+ * The terrarium as a lit 3D scene. Like the SVG jar, every visible thing maps
+ * to something simulated: the glass fogs and streams with condensation, wet
+ * soil darkens and turns glossy, the reservoir fills, plants droop with turgor
+ * and brown with health, the crew moves, mold spreads, and the lights follow
+ * the photoperiod.
+ */
+export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label }: Terrarium3DProps) {
+  const bg = useCssColor('--bg');
+  const [interacting, setInteracting] = useState(false);
+  return (
+    <div className={`jar3d${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name}>
+      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true }}>
+        <color attach="background" args={[bg]} />
+        <Scene spec={spec} state={state} lively={lively} />
+        <OrbitControls
+          makeDefault enablePan={false} enableZoom={false} enableDamping
+          minPolarAngle={0.75} maxPolarAngle={1.62}
+          autoRotate={autoRotate && !interacting} autoRotateSpeed={0.5}
+          onStart={() => setInteracting(true)} onEnd={() => setInteracting(false)}
+        />
+      </Canvas>
+    </div>
+  );
+}
+
+function useCssColor(name: string) {
+  const read = () => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#e5ebe7';
+  const [v, setV] = useState(read);
+  useEffect(() => {
+    const mq = matchMedia('(prefers-color-scheme: dark)');
+    const f = () => setV(read());
+    mq.addEventListener('change', f);
+    return () => mq.removeEventListener('change', f);
+  }, []);
+  return v;
+}
+
+// ------------------------------------------------------------------ layout
+
+const DRAIN_H = { none: 0, leca: 0.2, gravel: 0.16 } as const;
+const SUB_H = { shallow: 0.24, standard: 0.36, deep: 0.48 } as const;
+const BASE_H: Partial<Record<string, number>> = { cloche: 0.12, wardian: 0.14 };
+
+interface Layout {
+  shape: Shape;
+  floorY: number;
+  drainTop: number;
+  gy: number;
+  baseY: number;
+  groundFp: Footprint;
+  ground: ReturnType<typeof groundGeometry>;
+  /** Plants in a small vessel are drawn larger, as on the shelf. */
+  k: number;
+}
+
+function useLayout(spec: TerrariumSpec): Layout {
+  return useMemo(() => {
+    const shape = SHAPES[spec.vessel];
+    const floorY = shape.kind === 'round' && shape.openBottom ? 0 : 0.03;
+    const drainTop = floorY + DRAIN_H[spec.drainage];
+    const gy = drainTop + SUB_H[spec.depth];
+    const ground = groundGeometry(shape, gy, spec.seed, 0.018);
+    return {
+      shape, floorY, drainTop, gy, ground,
+      baseY: -(BASE_H[spec.vessel] ?? 0.002),
+      groundFp: footprint(shape, gy, 0.1),
+      k: clamp(3.5 * Math.cbrt(6 / spec.sizeL), 2.1, 4.8),
+    };
+  }, [spec.vessel, spec.drainage, spec.depth, spec.seed, spec.sizeL]);
+}
+
+/** Round to a step, so the scene rebuilds geometry only when a change would be visible. */
+const q = (x: number, step: number) => Math.round(x / step) * step;
+
+// ------------------------------------------------------------------ scene
+
+function Scene({ spec, state, lively }: { spec: TerrariumSpec; state: TerrariumState; lively: boolean }) {
+  const L = useLayout(spec);
+  const cl = state.climate;
+  const g = jarGeometry(state.container);
+  const moisture = cl.moisture;
+  const wet = clamp((moisture - 0.3) / 0.9);
+  const dry = clamp((0.45 - moisture) / 0.25);
+  const reservoir = g.reservoirCapacityG > 0 ? clamp(state.pools.reservoirWaterG / g.reservoirCapacityG) : 0;
+  const visibleMold = 0.1 * state.container.substrateL;
+  const mold = clamp(state.pools.moldG / (2 * visibleMold));
+  const litter = spec.hardscape.includes('leaf-litter') ? clamp(state.pools.detritusG / (state.container.substrateL * 9)) : 0;
+  const ppfd = state.container.light.ppfd;
+
+  return (
+    <>
+      <CameraRig shape={L.shape} baseY={L.baseY} />
+      <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} />
+      <Shelf y={L.baseY} />
+      <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={512} frames={1} color="#1d1a14" />
+
+      <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
+      <Hardscape L={L} spec={spec} />
+      <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} />
+      <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
+      <Mold L={L} amount={q(mold, 0.05)} />
+      <Critters L={L} state={state} lively={lively} />
+      <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} />
+    </>
+  );
+}
+
+function CameraRig({ shape, baseY }: { shape: Shape; baseY: number }) {
+  const { camera, size, controls } = useThree();
+  useLayoutEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    const h = shape.top - baseY + 0.35;
+    const w = shape.kind === 'square' ? shape.hx * 2 + 0.6 : Math.max(...shape.profile.map(([r]) => r)) * 2 + 0.3;
+    const vfov = (cam.fov * Math.PI) / 180;
+    const aspect = size.width / Math.max(1, size.height);
+    const d = Math.max(h / (2 * Math.tan(vfov / 2)), w / (2 * Math.tan(vfov / 2) * aspect)) * 1.05;
+    const ty = baseY + h * 0.46;
+    cam.position.set(0, ty + d * 0.2, d);
+    cam.lookAt(0, ty, 0);
+    const c = controls as unknown as OrbitControlsImpl | null;
+    if (c) {
+      c.target.set(0, ty, 0);
+      c.update();
+    }
+  }, [camera, size.width, size.height, controls, shape, baseY]);
+  return null;
+}
+
+// ------------------------------------------------------------------ light
+
+function Lights({ lightOn, ppfd, placement }: { lightOn: boolean; ppfd: number; placement: TerrariumSpec['placement'] }) {
+  const key = useRef<THREE.DirectionalLight>(null);
+  const hemi = useRef<THREE.HemisphereLight>(null);
+  const scene = useThree((s) => s.scene);
+  const grow = placement === 'grow-light';
+  const dayColor = new THREE.Color(grow ? '#f6f0ff' : placement === 'north-window' ? '#e9f0ff' : '#fff2de');
+  const night = new THREE.Color('#8fa6d8');
+  const level = clamp(ppfd / 150, 0.15, 1.8);
+  useFrame((_, dt) => {
+    const k = 1 - Math.exp(-dt * 3);
+    if (key.current) {
+      const target = lightOn ? 0.7 + 1.7 * level : 0.22;
+      key.current.intensity += (target - key.current.intensity) * k;
+      key.current.color.lerp(lightOn ? dayColor : night, k);
+    }
+    if (hemi.current) hemi.current.intensity += ((lightOn ? 0.55 : 0.08) - hemi.current.intensity) * k;
+    const env = scene as THREE.Scene & { environmentIntensity?: number };
+    if (env.environmentIntensity !== undefined) env.environmentIntensity += ((lightOn ? 1 : 0.22) - env.environmentIntensity) * k;
+  });
+  const pos: [number, number, number] = grow ? [0.4, 6, 0.8] : [-4, 3.6, 2.6];
+  return (
+    <>
+      <hemisphereLight ref={hemi} args={['#dfe9ff', '#5d4b38', 0.5]} />
+      <directionalLight
+        ref={key} position={pos} intensity={1.6} castShadow
+        shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} shadow-normalBias={0.02}
+        shadow-camera-left={-2} shadow-camera-right={2} shadow-camera-top={2.5} shadow-camera-bottom={-1} shadow-camera-near={0.5} shadow-camera-far={14}
+      />
+      <Environment resolution={256} frames={1}>
+        <Lightformer form="rect" intensity={2.2} position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
+        <Lightformer form="rect" intensity={4} position={[-5, 2.2, 1.5]} rotation={[0, Math.PI / 2, 0]} scale={[2.4, 3.6, 1]} />
+        <Lightformer form="rect" intensity={0.8} position={[5, 1.5, -1]} rotation={[0, -Math.PI / 2, 0]} scale={[4, 2, 1]} />
+        <Lightformer form="rect" intensity={0.5} position={[0, 1, -6]} scale={[10, 3, 1]} color="#cfe0d6" />
+      </Environment>
+    </>
+  );
+}
+
+function Shelf({ y }: { y: number }) {
+  const mat = useMemo(() => {
+    const map = shelfTexture().clone();
+    map.repeat.set(1.4, 1);
+    map.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({ map, roughness: 0.62, metalness: 0 });
+  }, []);
+  return (
+    <mesh position={[0, y - 0.07, 0.4]} receiveShadow material={mat}>
+      <boxGeometry args={[7, 0.14, 3.2]} />
+    </mesh>
+  );
+}
+
+// ------------------------------------------------------------------ glass
+
+const GLASS_PROPS: THREE.MeshPhysicalMaterialParameters = {
+  color: '#ffffff', transmission: 1, thickness: 0.06, ior: 1.5, roughness: 0.04, metalness: 0,
+  clearcoat: 1, clearcoatRoughness: 0.03, attenuationColor: new THREE.Color('#e3f2ea'), attenuationDistance: 3,
+  specularIntensity: 1, envMapIntensity: 1, side: THREE.DoubleSide, depthWrite: false,
+};
+
+function useGlass() {
+  return useMemo(() => new THREE.MeshPhysicalMaterial(GLASS_PROPS), []);
+}
+
+function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSpec; cond: number; night: boolean; lively: boolean }) {
+  const { shape } = L;
+  const glass = useGlass();
+  const geo = useMemo(() => glassGeometry(shape), [shape]);
+  const film = useMemo(() => condensationMaterial(), []);
+  const openTop = spec.lid === 'open';
+
+  // Cube with an open top: hide the top face of the box.
+  const materials = useMemo(() => {
+    if (shape.kind !== 'square' || shape.roof) return glass;
+    const none = new THREE.MeshBasicMaterial({ visible: false });
+    return [glass, glass, none, glass, glass, glass];
+  }, [shape, glass]);
+
+  useFrame((s, dt) => {
+    const k = 1 - Math.exp(-dt * 2);
+    const u = film.uniforms;
+    u.uCond!.value += (clamp(cond, 0, 1.6) - u.uCond!.value) * k;
+    if (lively) u.uTime!.value += dt;
+    u.uNight!.value += ((night ? 1 : 0) - u.uNight!.value) * k;
+    // Fogged glass also blurs what is behind it.
+    glass.roughness = 0.03 + 0.14 * clamp((u.uCond!.value - 0.3) / 0.9);
+  });
+  useEffect(() => {
+    const u = film.uniforms;
+    u.uGround!.value = L.gy;
+    u.uTop!.value = shape.top;
+    u.uSquare!.value = shape.kind === 'square' ? 1 : 0;
+  }, [film, L.gy, shape]);
+
+  const cracked = spec.lid === 'cracked';
+  const clocheTilt = spec.vessel === 'cloche' && cracked;
+
+  return (
+    <group>
+      <group position={clocheTilt ? [0, 0.05, 0] : [0, 0, 0]} rotation={clocheTilt ? [0, 0, -0.035] : [0, 0, 0]}>
+        <mesh geometry={geo} material={materials} renderOrder={1} />
+        <mesh geometry={geo} material={film} scale={[0.985, 0.995, 0.985]} renderOrder={2} />
+        {shape.kind === 'round' && !shape.openBottom && <Rim shape={shape} glass={glass} />}
+        {spec.vessel === 'cloche' && <Knob y={shape.top + 0.05} glass={glass} />}
+        {shape.kind === 'square' && <Frame shape={shape} wardian={spec.vessel === 'wardian'} />}
+      </group>
+      {!openTop && <Lid L={L} spec={spec} glass={glass} />}
+      {spec.vessel === 'cloche' && (
+        <mesh position={[0, -0.06, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[1.12, 1.15, 0.12, 64]} />
+          <meshStandardMaterial map={barkTexture()} color="#9c7a58" roughness={0.6} />
+        </mesh>
+      )}
+      {spec.vessel === 'wardian' && shape.kind === 'square' && (
+        <mesh position={[0, -0.07, 0]} castShadow receiveShadow>
+          <boxGeometry args={[shape.hx * 2 + 0.18, 0.14, shape.hz * 2 + 0.18]} />
+          <meshStandardMaterial color="#2f4a3a" roughness={0.45} metalness={0.2} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function Rim({ shape, glass }: { shape: Extract<Shape, { kind: 'round' }>; glass: THREE.Material }) {
+  const [r, y] = shape.profile[shape.profile.length - 1]!;
+  return (
+    <mesh position={[0, y, 0]} rotation={[Math.PI / 2, 0, 0]} material={glass}>
+      <torusGeometry args={[r, 0.022, 12, 96]} />
+    </mesh>
+  );
+}
+
+function Knob({ y, glass }: { y: number; glass: THREE.Material }) {
+  return (
+    <mesh position={[0, y, 0]} material={glass}>
+      <sphereGeometry args={[0.08, 24, 16]} />
+    </mesh>
+  );
+}
+
+/** Metal glazing bars for the Wardian case; clear silicone seams for the cube. */
+function Frame({ shape, wardian }: { shape: Extract<Shape, { kind: 'square' }>; wardian: boolean }) {
+  const { geometry, count, matrices } = useMemo(() => {
+    const edges = new THREE.EdgesGeometry(glassGeometry(shape), 20);
+    const pos = edges.attributes.position as THREE.BufferAttribute;
+    const segs: [THREE.Vector3, THREE.Vector3][] = [];
+    for (let i = 0; i < pos.count; i += 2) {
+      segs.push([new THREE.Vector3().fromBufferAttribute(pos, i), new THREE.Vector3().fromBufferAttribute(pos, i + 1)]);
+    }
+    if (wardian) {
+      // Mullions: one down the middle of each long face, one across at mid-height.
+      const { hx, hz, wallTop } = shape;
+      for (const z of [-hz, hz]) {
+        segs.push([new THREE.Vector3(0, 0, z), new THREE.Vector3(0, shape.top, z)]);
+        segs.push([new THREE.Vector3(-hx, wallTop * 0.55, z), new THREE.Vector3(hx, wallTop * 0.55, z)]);
+      }
+      for (const x of [-hx, hx]) segs.push([new THREE.Vector3(x, wallTop * 0.55, -hz), new THREE.Vector3(x, wallTop * 0.55, hz)]);
+    }
+    const geometry = new THREE.CylinderGeometry(1, 1, 1, 6);
+    const up = new THREE.Vector3(0, 1, 0);
+    const r = wardian ? 0.022 : 0.009;
+    const matrices = segs.map(([a, b]) => {
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      const qq = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
+      return new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), qq, new THREE.Vector3(r, len + r * 2, r));
+    });
+    return { geometry, count: matrices.length, matrices };
+  }, [shape, wardian]);
+  const ref = useRef<THREE.InstancedMesh>(null);
+  useLayoutEffect(() => {
+    const m = ref.current;
+    if (!m) return;
+    matrices.forEach((mx, i) => m.setMatrixAt(i, mx));
+    m.instanceMatrix.needsUpdate = true;
+    m.computeBoundingSphere();
+  }, [matrices]);
+  return (
+    <instancedMesh key={count} ref={ref} args={[geometry, undefined, count]} castShadow>
+      {wardian
+        ? <meshStandardMaterial color="#2c3b33" roughness={0.38} metalness={0.75} />
+        : <meshPhysicalMaterial color="#cfe3da" roughness={0.3} transparent opacity={0.55} />}
+    </instancedMesh>
+  );
+}
+
+function Lid({ L, spec, glass }: { L: Layout; spec: TerrariumSpec; glass: THREE.Material }) {
+  const { shape } = L;
+  const cracked = spec.lid === 'cracked';
+  const corkMat = useMemo(() => new THREE.MeshStandardMaterial({ map: corkTexture(), bumpMap: corkTexture(), bumpScale: 2, roughness: 0.9 }), []);
+  if (shape.kind === 'round') {
+    const [r, top] = shape.profile[shape.profile.length - 1]!;
+    if (spec.vessel === 'cloche') return null;
+    if (spec.lid === 'cork' || spec.vessel === 'bottle') {
+      const h = spec.vessel === 'bottle' ? 0.26 : 0.2;
+      return (
+        <mesh position={[0, top - h * 0.35 + (cracked ? 0.14 : 0), 0]} material={corkMat} castShadow>
+          <cylinderGeometry args={[r * 1.02, r * 0.94, h, 48]} />
+        </mesh>
+      );
+    }
+    return (
+      <group position={[cracked ? 0.06 : 0, top + 0.025 + (cracked ? 0.06 : 0), 0]} rotation={[0, 0, cracked ? -0.09 : 0]}>
+        <mesh material={glass}>
+          <cylinderGeometry args={[r + 0.06, r + 0.06, 0.05, 72]} />
+        </mesh>
+        {spec.vessel === 'jar' && (
+          <mesh position={[0, 0.1, 0]} material={glass}>
+            <sphereGeometry args={[0.09, 24, 16]} />
+          </mesh>
+        )}
+      </group>
+    );
+  }
+  if (!shape.roof) {
+    return (
+      <mesh position={[cracked ? 0.35 : 0, shape.wallTop + 0.018, 0]} material={glass}>
+        <boxGeometry args={[shape.hx * 2 + 0.04, 0.03, shape.hz * 2 + 0.04]} />
+      </mesh>
+    );
+  }
+  // Wardian case: a small vent pane propped open on the roof.
+  if (!cracked) return null;
+  const slope = Math.atan2(shape.top - shape.wallTop, shape.hx);
+  return (
+    <mesh position={[shape.hx * 0.32, shape.wallTop + (shape.top - shape.wallTop) * 0.7 + 0.06, 0]} rotation={[0, 0, -slope + 0.25]} material={glass}>
+      <boxGeometry args={[0.5, 0.02, 0.6]} />
+    </mesh>
+  );
+}
+
+// ------------------------------------------------------------------ layers
+
+function Layers({ L, spec, wet, reservoir, waterlogged }: { L: Layout; spec: TerrariumSpec; wet: number; reservoir: number; waterlogged: boolean }) {
+  const { shape, floorY, drainTop, gy } = L;
+  const hasDrain = spec.drainage !== 'none';
+  const soil = useMemo(() => {
+    const map = soilTexture(spec.substrate);
+    return new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 2.2, roughness: 0.95 });
+  }, [spec.substrate]);
+  const soilSide = useMemo(() => {
+    const map = soilTexture(spec.substrate).clone();
+    map.repeat.set(4, 0.8);
+    map.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 0.6, roughness: 0.95 });
+  }, [spec.substrate]);
+  // Wet soil is darker and catches the light.
+  useEffect(() => {
+    for (const m of [soil, soilSide]) {
+      m.color.setScalar(1.25 - 0.55 * wet);
+      m.roughness = 0.95 - 0.45 * wet;
+    }
+  }, [soil, soilSide, wet]);
+
+  const subGeo = useMemo(() => layerGeometry(shape, drainTop, gy, 0.012), [shape, drainTop, gy]);
+  const barrierGeo = useMemo(() => layerGeometry(shape, drainTop - 0.006, drainTop + 0.006, 0.011), [shape, drainTop]);
+  const waterGeo = useMemo(
+    () => (hasDrain && reservoir > 0.02 ? layerGeometry(shape, floorY, floorY + (drainTop - floorY) * reservoir, 0.014) : null),
+    [shape, floorY, drainTop, reservoir, hasDrain],
+  );
+
+  return (
+    <group>
+      {hasDrain && <Drainage shape={shape} y0={floorY} y1={drainTop} kind={spec.drainage as 'leca' | 'gravel'} />}
+      {waterGeo && (
+        <mesh geometry={waterGeo} renderOrder={1}>
+          <meshPhysicalMaterial color="#4f8799" roughness={0.08} transparent opacity={0.42} depthWrite={false} />
+        </mesh>
+      )}
+      {hasDrain && (
+        <mesh geometry={barrierGeo}>
+          <meshStandardMaterial color="#2c3430" roughness={0.8} />
+        </mesh>
+      )}
+      <mesh geometry={subGeo} material={soilSide} receiveShadow />
+      <mesh geometry={L.ground.geometry} material={soil} receiveShadow />
+      {waterlogged && (
+        <mesh geometry={L.ground.geometry} position={[0, 0.006, 0]} renderOrder={1}>
+          <meshPhysicalMaterial color="#87b5c4" roughness={0.02} transparent opacity={0.28} depthWrite={false} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function Drainage({ shape, y0, y1, kind }: { shape: Shape; y0: number; y1: number; kind: 'leca' | 'gravel' }) {
+  const { geometry, material, items } = useMemo(() => {
+    const leca = kind === 'leca';
+    const r0 = leca ? 0.055 : 0.042;
+    const geometry = leca ? new THREE.SphereGeometry(1, 14, 10) : new THREE.DodecahedronGeometry(1, 0);
+    const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: leca ? 0.95 : 0.7, bumpMap: lumpTexture(), bumpScale: 2 });
+    const rnd = makeRng(leca ? 11 : 12);
+    const items: { m: THREE.Matrix4; c: THREE.Color }[] = [];
+    const palette = leca ? ['#a5633a', '#b46f42', '#93552f', '#8a4e2b'] : ['#8d918c', '#7b7f7a', '#a4a69f', '#6e716d'];
+    const step = r0 * 1.75;
+    for (let y = y0 + r0 * 0.9; y < y1 - r0 * 0.3; y += step * 0.8) {
+      const fp = footprint(shape, Math.max(0.01, y), r0 + 0.02);
+      const ext = fp.kind === 'circle' ? fp.r : Math.max(fp.hx, fp.hz);
+      for (let x = -ext; x <= ext; x += step) {
+        for (let z = -ext; z <= ext; z += step) {
+          const jx = x + (rnd() - 0.5) * step * 0.5;
+          const jz = z + (rnd() - 0.5) * step * 0.5;
+          if (!insideFp(fp, jx, jz)) continue;
+          const s = r0 * (0.75 + 0.5 * rnd());
+          const e = new THREE.Euler(rnd() * 6, rnd() * 6, rnd() * 6);
+          items.push({
+            m: new THREE.Matrix4().compose(new THREE.Vector3(jx, y + (rnd() - 0.5) * r0 * 0.4, jz), new THREE.Quaternion().setFromEuler(e), new THREE.Vector3(s, s * (leca ? 0.92 : 0.8), s)),
+            c: new THREE.Color(palette[Math.floor(rnd() * palette.length)]!),
+          });
+        }
+      }
+    }
+    return { geometry, material, items };
+  }, [shape, y0, y1, kind]);
+  return <InstancedParts geometry={geometry} material={material} items={items} cast={false} />;
+}
+
+function InstancedParts({ geometry, material, items, cast = true }: {
+  geometry: THREE.BufferGeometry; material: THREE.Material; items: { m: THREE.Matrix4; c: THREE.Color }[]; cast?: boolean;
+}) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  useLayoutEffect(() => {
+    const mesh = ref.current;
+    if (!mesh) return;
+    items.forEach((it, i) => {
+      mesh.setMatrixAt(i, it.m);
+      mesh.setColorAt(i, it.c);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+  }, [items]);
+  if (items.length === 0) return null;
+  return <instancedMesh key={items.length} ref={ref} args={[geometry, material, items.length]} castShadow={cast} receiveShadow />;
+}
+
+// ------------------------------------------------------------------ hardscape
+
+function Hardscape({ L, spec }: { L: Layout; spec: TerrariumSpec }) {
+  const { shape, gy, groundFp } = L;
+  const R = groundFp.kind === 'circle' ? groundFp.r : Math.min(groundFp.hx, groundFp.hz) * 1.1;
+  const wood = useMemo(() => {
+    if (!spec.hardscape.includes('wood')) return null;
+    const lift = Math.min(0.55, (shape.top - gy) * 0.45);
+    const a = new THREE.Vector3(-0.78 * R, gy - 0.03, -0.1 * R);
+    const b = new THREE.Vector3(-0.25 * R, gy + lift * 0.45, -0.42 * R);
+    const c = new THREE.Vector3(0.5 * R, gy + lift, -0.5 * R);
+    const trunk = taperedTube([a, new THREE.Vector3(-0.55 * R, gy + 0.08, -0.25 * R), b, c], 0.1 * Math.min(1, R), 0.03, 32, 10);
+    const branch = taperedTube([b, new THREE.Vector3(-0.05 * R, gy + lift * 0.6, -0.25 * R), new THREE.Vector3(0.12 * R, gy + lift * 0.7, -0.1 * R)], 0.045, 0.014, 16, 8);
+    const map = barkTexture().clone();
+    map.repeat.set(3, 1);
+    map.needsUpdate = true;
+    const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.88 });
+    return { trunk, branch, mat };
+  }, [spec.hardscape, shape, gy, R]);
+  const stone = useMemo(() => {
+    if (!spec.hardscape.includes('stone')) return null;
+    const g = new THREE.IcosahedronGeometry(1, 4);
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const n = fbm(v.x * 1.6 + 4, v.y * 1.6 + v.z * 1.3, 21, 4);
+      v.multiplyScalar(0.8 + 0.45 * n);
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: '#8e938c', roughness: 0.82, bumpMap: lumpTexture(), bumpScale: 5 });
+    const s = 0.24 * Math.min(1, R);
+    const [x, z] = pointIn(groundFp, 0.55, 0.05);
+    return { g, mat, s, x, z, y: L.ground.heightAt(x, z) };
+  }, [spec.hardscape, groundFp, R, L.ground]);
+
+  return (
+    <group>
+      {wood && (
+        <>
+          <mesh geometry={wood.trunk} material={wood.mat} castShadow receiveShadow />
+          <mesh geometry={wood.branch} material={wood.mat} castShadow receiveShadow />
+        </>
+      )}
+      {stone && (
+        <mesh geometry={stone.g} material={stone.mat} position={[stone.x, stone.y + stone.s * 0.15, stone.z]} scale={[stone.s * 1.15, stone.s * 0.72, stone.s * 0.95]} rotation={[0.1, 0.6, 0]} castShadow receiveShadow />
+      )}
+    </group>
+  );
+}
+
+// ------------------------------------------------------------------ plants
+
+function Plants({ L, spec, state, dry }: { L: Layout; spec: TerrariumSpec; state: TerrariumState; dry: number }) {
+  const ids = state.plants.map((p) => p.id).join(',');
+  const places = useMemo(() => {
+    const out = new Map<string, [number, number]>();
+    const n = state.plants.length;
+    state.plants.forEach((pl, i) => {
+      const r = makeRng(hashSeed(pl.id + spec.seed));
+      const u = -0.72 + (1.44 * (i + 0.5)) / Math.max(1, n) + (r() - 0.5) * 0.22;
+      const v = (DEPTH[pl.speciesId] ?? 0) + (r() - 0.5) * 0.25;
+      out.set(pl.id, pointIn(L.groundFp, u, v));
+    });
+    return out;
+    // Placement depends only on which plants exist, not on how they are doing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, L.groundFp, spec.seed]);
+  return (
+    <group>
+      {state.plants.map((pl) => {
+        const [x, z] = places.get(pl.id) ?? [0, 0];
+        const sp = PLANT_MAX[pl.speciesId] ?? 1;
+        return (
+          <Plant
+            key={pl.id} id={pl.id} speciesId={pl.speciesId} L={L} x={x} z={z} dry={dry}
+            s={q(Math.sqrt(clamp(pl.biomassG / sp)), 0.025)} turgor={q(pl.turgor, 0.05)} health={q(pl.health, 0.05)}
+          />
+        );
+      })}
+    </group>
+  );
+}
+
+const PLANT_MAX: Record<string, number> = Object.fromEntries(PLANT_IDS.map((id) => [id, plantSpecies(id).maxBiomassG]));
+
+function Plant({ id, speciesId, L, x, z, s, turgor, health, dry }: {
+  id: string; speciesId: string; L: Layout; x: number; z: number; s: number; turgor: number; health: number; dry: number;
+}) {
+  const y = L.ground.heightAt(x, z);
+  const parts = useMemo<Part[]>(() => {
+    const build = BUILDERS[speciesId];
+    if (!build) return [];
+    const c = PLANT_COLORS[speciesId] ?? { leaf: '#4c7a37', accent: '#3a5f2a' };
+    const k = L.k;
+    return build({
+      s, turgor, health, dry,
+      rng: makeRng(hashSeed(id)),
+      leaf: new THREE.Color(c.leaf), accent: new THREE.Color(c.accent),
+      groundAt: (lx, lz) => (L.ground.heightAt(x + lx * k, z + lz * k) - y) / k,
+      wallDist: (dx, dz, ly) => {
+        const wy = y + ly * k;
+        const fp = footprint(L.shape, wy, 0.03);
+        return distToWall(fp, x, z, dx, dz) / k;
+      },
+      ceiling: ((L.shape.kind === 'square' ? L.shape.wallTop : L.shape.top - 0.25) - 0.08 - y) / k,
+    });
+  }, [speciesId, id, s, turgor, health, dry, L, x, z, y]);
+  useEffect(() => () => {
+    for (const p of parts) {
+      if (!p.owned) continue;
+      p.geometry.dispose();
+      if (!(p.material as THREE.MeshStandardMaterial).map) p.material.dispose();
+    }
+  }, [parts]);
+  return (
+    <group position={[x, y, z]} scale={L.k}>
+      {parts.map((p, i) =>
+        p.instances
+          ? <InstancedParts key={i} geometry={p.geometry} material={p.material} items={p.instances.map((it) => ({ m: it.matrix, c: it.color }))} />
+          : <mesh key={i} geometry={p.geometry} material={p.material} castShadow receiveShadow />,
+      )}
+    </group>
+  );
+}
+
+// ------------------------------------------------------------------ litter and mold
+
+function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }) {
+  const items = useMemo(() => {
+    const r = makeRng(seed + 404);
+    const n = Math.round(amount * 46);
+    const palette = ['#8a5a2b', '#a0703a', '#6f4a26', '#b0864e', '#7c5a3a'];
+    return Array.from({ length: n }, () => {
+      const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      const e = new THREE.Euler(Math.PI / 2 - 0.15 + r() * 0.3, r() * Math.PI * 2, (r() - 0.5) * 0.4, 'YXZ');
+      const s = 0.8 + r() * 0.8;
+      return {
+        m: new THREE.Matrix4().compose(new THREE.Vector3(x, L.ground.heightAt(x, z) + 0.004, z), new THREE.Quaternion().setFromEuler(e), new THREE.Vector3(s, s, s)),
+        c: new THREE.Color(palette[Math.floor(r() * palette.length)]!),
+      };
+    });
+  }, [L, amount, seed]);
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }), []);
+  return <InstancedParts geometry={leafLitterGeometry()} material={mat} items={items} />;
+}
+
+function Mold({ L, amount }: { L: Layout; amount: number }) {
+  const { items, mat } = useMemo(() => {
+    const r = makeRng(9);
+    const n = amount > 0.05 ? Math.ceil(amount * 9) : 0;
+    const items = Array.from({ length: n }, () => {
+      const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      const s = 0.08 + r() * 0.22 * (0.4 + amount);
+      return {
+        m: new THREE.Matrix4().compose(
+          new THREE.Vector3(x, L.ground.heightAt(x, z) + 0.008, z),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, r() * 6)),
+          new THREE.Vector3(s, s, s),
+        ),
+        c: new THREE.Color('#ffffff'),
+      };
+    });
+    const mat = new THREE.MeshStandardMaterial({ map: moldTexture(), transparent: true, depthWrite: false, opacity: 0.55 + 0.45 * amount, roughness: 1 });
+    return { items, mat };
+  }, [L, amount]);
+  return <InstancedParts geometry={PLANE} material={mat} items={items} cast={false} />;
+}
+const PLANE = new THREE.PlaneGeometry(1, 1);
+
+// ------------------------------------------------------------------ the crew
+
+interface Bug { x: number; z: number; y: number; h: number; t: number; vx: number; vy: number; vz: number; phase: number }
+
+function Critters({ L, state, lively }: { L: Layout; state: TerrariumState; lively: boolean }) {
+  const counts = useMemo(() => {
+    const c = { springtail: 0, isopod: 0, woodlouse: 0, gnat: 0 };
+    for (const f of state.fauna) {
+      const pop = f.juveniles + f.adults;
+      if (f.speciesId === 'springtail') c.springtail = Math.min(45, Math.round(Math.log10(pop + 1) * 11));
+      else if (f.speciesId === 'dwarf-white-isopod') c.isopod = Math.min(16, Math.ceil(Math.log2(pop + 1) * 1.6));
+      else if (f.speciesId === 'rough-woodlouse') c.woodlouse = Math.round(Math.min(10, Math.ceil(pop / 2)) * (state.climate.lightOn ? 0.35 : 1));
+      else if (f.speciesId === 'fungus-gnat') c.gnat = Math.min(12, Math.ceil(pop / 12));
+    }
+    return c;
+  }, [state.fauna, state.climate.lightOn]);
+  return (
+    <>
+      <Swarm kind="springtail" n={counts.springtail} L={L} lively={lively} />
+      <Swarm kind="isopod" n={counts.isopod} L={L} lively={lively} />
+      <Swarm kind="woodlouse" n={counts.woodlouse} L={L} lively={lively} />
+      <Swarm kind="gnat" n={counts.gnat} L={L} lively={lively} />
+    </>
+  );
+}
+
+const BUG_LOOK = {
+  springtail: { scale: [0.0045, 0.0035, 0.009], color: '#eef0ea', speed: 0, rough: 0.5 },
+  isopod: { scale: [0.012, 0.007, 0.02], color: '#eceee6', speed: 0.025, rough: 0.45 },
+  woodlouse: { scale: [0.022, 0.011, 0.036], color: '#5d6268', speed: 0.035, rough: 0.35 },
+  gnat: { scale: [0.006, 0.006, 0.009], color: '#1e1e1e', speed: 0.18, rough: 0.6 },
+} as const;
+const BUG_GEO = new THREE.SphereGeometry(1, 10, 8);
+
+function Swarm({ kind, n, L, lively }: { kind: keyof typeof BUG_LOOK; n: number; L: Layout; lively: boolean }) {
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const look = BUG_LOOK[kind];
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: look.color, roughness: look.rough }), [look]);
+  const bugs = useMemo<Bug[]>(() => {
+    const r = makeRng(hashSeed(kind) + n);
+    return Array.from({ length: n }, () => {
+      const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      const a = r() * Math.PI * 2;
+      return { x, z, y: L.gy + 0.2 + r() * 0.6, h: a, t: r() * 4, vx: Math.cos(a) * 0.1, vy: 0, vz: Math.sin(a) * 0.1, phase: r() * 10 };
+    });
+  }, [kind, n, L]);
+  const tmp = useMemo(() => ({ m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(), s: new THREE.Vector3(...look.scale) }), [look]);
+
+  const write = (dt: number) => {
+    const mesh = ref.current;
+    if (!mesh) return;
+    const fp = L.groundFp;
+    for (let i = 0; i < bugs.length; i++) {
+      const b = bugs[i]!;
+      let y: number;
+      if (kind === 'gnat') {
+        b.vx += (Math.random() - 0.5) * dt * 1.4;
+        b.vy += (Math.random() - 0.5) * dt * 1.0;
+        b.vz += (Math.random() - 0.5) * dt * 1.4;
+        const sp = Math.hypot(b.vx, b.vy, b.vz);
+        if (sp > look.speed) { b.vx *= look.speed / sp; b.vy *= look.speed / sp; b.vz *= look.speed / sp; }
+        b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+        const lo = L.gy + 0.12;
+        const hi = (L.shape.kind === 'square' ? L.shape.wallTop : L.shape.top) - 0.3;
+        if (b.y < lo || b.y > hi) { b.vy = -b.vy; b.y = clamp(b.y, lo, hi); }
+        const air = footprint(L.shape, b.y, 0.08);
+        if (!insideFp(air, b.x, b.z)) { b.vx = -b.vx - b.x * 0.2; b.vz = -b.vz - b.z * 0.2; b.x *= 0.98; b.z *= 0.98; }
+        y = b.y;
+        tmp.e.set(0, Math.atan2(b.vx, b.vz), 0);
+      } else if (kind === 'springtail') {
+        // Mostly still, then a sudden hop.
+        b.t -= dt;
+        if (b.t < -0.35) {
+          b.t = 1.5 + Math.random() * 5;
+          b.h = Math.random() * Math.PI * 2;
+        }
+        let hop = 0;
+        if (b.t < 0) {
+          const u = -b.t / 0.35;
+          hop = 4 * u * (1 - u) * 0.06;
+          const nx = b.x + Math.sin(b.h) * dt * 0.18;
+          const nz = b.z + Math.cos(b.h) * dt * 0.18;
+          if (insideFp(fp, nx, nz)) { b.x = nx; b.z = nz; }
+        }
+        y = L.ground.heightAt(b.x, b.z) + 0.005 + hop;
+        tmp.e.set(0, b.h, 0);
+      } else {
+        // Isopods and woodlice wander, turning gently, and turn back at the glass.
+        b.h += Math.sin(b.phase + performance.now() / 1700) * dt * 1.2;
+        const nx = b.x + Math.sin(b.h) * look.speed * dt;
+        const nz = b.z + Math.cos(b.h) * look.speed * dt;
+        if (insideFp(fp, nx, nz, 0.02)) { b.x = nx; b.z = nz; } else b.h += Math.PI * 0.7;
+        y = L.ground.heightAt(b.x, b.z) + look.scale[1] * 0.7;
+        tmp.e.set(0, b.h, 0);
+      }
+      tmp.q.setFromEuler(tmp.e);
+      tmp.p.set(b.x, y, b.z);
+      tmp.m.compose(tmp.p, tmp.q, tmp.s);
+      mesh.setMatrixAt(i, tmp.m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+  };
+
+  useLayoutEffect(() => write(0));
+  useFrame((_, dt) => {
+    if (lively) write(Math.min(dt, 0.05));
+  });
+  if (n === 0) return null;
+  return <instancedMesh key={n} ref={ref} args={[BUG_GEO, mat, n]} castShadow frustumCulled={false} />;
+}

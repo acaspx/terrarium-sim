@@ -1,12 +1,13 @@
 import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Minus, Plus, X } from 'lucide-react';
 import {
-  BLANK_SPEC, buildTerrarium, checkSpec, CREW_COUNTS, CREW_IDS, DEPTHS, DRAINAGE, faunaSpecies, forecast,
+  BLANK_SPEC, buildTerrarium, checkSpec, run, CREW_COUNTS, CREW_IDS, DEPTHS, DRAINAGE, faunaSpecies, forecast,
   GROW_LIGHTS, HARDSCAPE, LIDS, MOISTURES, PLACEMENTS, PLANT_IDS, PLANT_SIZES, plantSpecies, RECIPES, ROOMS,
   SIZE_LABELS, SUBSTRATES, VESSELS,
   type HardscapeId, type SpecIssue, type TerrariumSpec, type VesselId,
 } from '../../engine/index.js';
-import { EmptyJar, Jar } from '../jar/Jar.js';
+import { EmptyJar } from '../jar/Jar.js';
+import { Jar3D } from '../jar/Jar3D.js';
 import { store } from '../store.js';
 import { pluralName } from '../format.js';
 import { ChoiceList, Segmented, Sparkline } from '../ui/controls.js';
@@ -17,6 +18,14 @@ function initialSpec(): TerrariumSpec {
   const q = new URLSearchParams(location.hash.split('?')[1] ?? '');
   const from = q.get('from');
   const recipe = q.get('recipe');
+  if (q.get('draft')) {
+    try {
+      const draft = sessionStorage.getItem('terrarium-sim:draft');
+      if (draft) return { ...(JSON.parse(draft) as TerrariumSpec), seed: Date.now() % 1e6 };
+    } catch {
+      // Fall through to a recipe.
+    }
+  }
   if (from) {
     const j = store.get(from);
     if (j) return { ...structuredClone(j.spec), name: `${j.spec.name} II`, seed: Date.now() % 1e6 };
@@ -33,9 +42,16 @@ export function Builder() {
     setRecipe('custom');
   };
 
-  const preview = useMemo(() => buildTerrarium(spec), [spec]);
+  const preview = useMemo(() => {
+    // Planted in the morning, shown in the afternoon light.
+    const s = buildTerrarium(spec);
+    run(s, 14);
+    return s;
+  }, [spec]);
   const deferred = useDeferredValue(spec);
   const fc = useMemo(() => forecast(deferred, 90), [deferred]);
+  const [previewDay, setPreviewDay] = useState(0);
+  const shown = previewDay === 0 || deferred !== spec ? preview : fc.snapshots.find((x) => x.day === previewDay)?.state ?? preview;
   const issues = useMemo(() => checkSpec(spec), [spec]);
   const issuesFor = (target: string) => issues.filter((i) => i.target === target);
 
@@ -60,8 +76,14 @@ export function Builder() {
       <a className="back" href="#/"><ArrowLeft size={16} aria-hidden="true" /> Shelf</a>
       <div className="builder">
         <aside className="builder-preview" aria-label="Preview and forecast">
-          <div className="jar-stage large">
-            <Jar spec={spec} state={preview} title={`Preview of ${spec.name}`} />
+          <div className="stage-3d">
+            <Jar3D spec={spec} state={shown} title={`Preview of ${spec.name}, day ${previewDay}`} />
+            <span className="stage-hint">Drag to turn</span>
+          </div>
+          <div className="day-scrub">
+            <span className="field-label">Preview</span>
+            <Segmented<number> label="Preview day" size="sm" value={previewDay} onChange={setPreviewDay}
+              options={[0, ...fc.snapshots.map((x) => x.day)].map((d) => ({ id: d, label: d === 0 ? 'Planted' : `Day ${d}` }))} />
           </div>
           <Forecast fc={fc} stale={deferred !== spec} issues={issues} />
         </aside>

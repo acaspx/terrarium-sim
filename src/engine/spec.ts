@@ -259,18 +259,29 @@ export interface Forecast {
   plantsStart: number;
   moldPeakDay: number | null;
   headlines: string[];
+  /** The jar at regular intervals, for previewing how a design develops. */
+  snapshots: { day: number; state: TerrariumState }[];
 }
 
+const snap = (s: TerrariumState) => ({ day: Math.floor(s.hour / 24), state: structuredClone({ ...s, events: [] }) });
+
 /** Run the design forward in time so the builder can show where it is heading. */
-export function forecast(spec: TerrariumSpec, days = 90): Forecast {
+export function forecast(spec: TerrariumSpec, days = 90, snapshotEvery = 15): Forecast {
   const s = buildTerrarium(spec);
   const scores: number[] = [];
+  const snapshots: Forecast['snapshots'] = [];
   let moldPeak = 0;
   let moldPeakDay: number | null = null;
   const visible = 0.1 * s.container.substrateL;
   for (let d = 0; d < days; d++) {
     run(s, 24);
     scores.push(healthScore(s));
+    // Snapshot in the early afternoon of the day, so the preview has the lights on.
+    if ((d + 1) % snapshotEvery === 0) {
+      const t = structuredClone(s);
+      run(t, 14);
+      snapshots.push(snap(t));
+    }
     if (s.pools.moldG > Math.max(moldPeak, visible)) {
       moldPeak = s.pools.moldG;
       moldPeakDay = d + 1;
@@ -298,6 +309,7 @@ export function forecast(spec: TerrariumSpec, days = 90): Forecast {
     plantsStart: spec.plants.length,
     moldPeakDay,
     headlines,
+    snapshots,
   };
 }
 
