@@ -31,6 +31,8 @@ function (`api/terrariums.ts`) backed by Redis.
    Without them the playground says it is not connected, and the rest of the app works.
 4. Every push to `main` deploys; every branch gets a preview URL.
 
+See [docs/DEPLOY.md](docs/DEPLOY.md) for the full checklist.
+
 In `npm run dev` the same API runs inside the Vite server. With no Redis
 variables in `.env` it uses an in-memory gallery seeded with a few example jars.
 
