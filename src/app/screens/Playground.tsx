@@ -185,7 +185,7 @@ export function SharedJar({ id }: { id: string }) {
         <div className="detail-jar">
           <div className="stage-3d">
             <Jar3D spec={s.spec} state={st} autoRotate title={`${s.spec.name} by ${s.author}, day ${s.day}`} />
-            <span className="stage-hint">Drag to turn</span>
+            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
           </div>
           <p className="jar-caption">Day {s.day}, shared {ago(s.createdAt)}. Lights {cl.lightOn ? 'on' : 'off'}.</p>
         </div>

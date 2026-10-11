@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
+import { plantStatus } from '../format.js';
+import { ContactShadows, Environment, Html, Lightformer } from '@react-three/drei';
 import * as THREE from 'three';
-import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { makeRng } from '../../engine/core/math.js';
 import {
   autoLayout, geometry as jarGeometry, plantSpecies, PLANT_IDS, type TerrariumSpec, type TerrariumState,
 } from '../../engine/index.js';
-import { condensationMaterial } from './condensation.js';
+import { condensationMaterial, rimMaterial, WIPES } from './condensation.js';
+import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, type Motion } from './rig.js';
 import { Critters } from './Critters.js';
 import { q, toUv, useLayout, woodPath, type Layout } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
@@ -39,18 +40,13 @@ export interface Terrarium3DProps {
  */
 export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange }: Terrarium3DProps) {
   const bg = useCssColor('--bg');
-  const [interacting, setInteracting] = useState(false);
+  // One per jar view, kept across re-renders: how the jar is being handled.
+  const motion = useMemo(newMotion, []);
   return (
     <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name}>
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true }}>
+      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
         <color attach="background" args={[bg]} />
-        <Scene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} />
-        <OrbitControls
-          makeDefault enablePan={false} enableZoom={false} enableDamping
-          minPolarAngle={0.75} maxPolarAngle={1.62}
-          autoRotate={autoRotate && !interacting} autoRotateSpeed={0.5}
-          onStart={() => setInteracting(true)} onEnd={() => setInteracting(false)}
-        />
+        <Scene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} />
       </Canvas>
     </div>
   );
@@ -70,8 +66,9 @@ function useCssColor(name: string) {
 
 // ------------------------------------------------------------------ scene
 
-function Scene({ spec, state, lively, wall, onArrange }: {
+function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate }: {
   spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange'];
+  motion: Motion; autoRotate: boolean;
 }) {
   const L = useLayout(spec);
   const cl = state.climate;
@@ -93,20 +90,22 @@ function Scene({ spec, state, lively, wall, onArrange }: {
       <Shelf y={L.baseY} />
       <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={512} frames={1} color="#1d1a14" />
 
-      <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
-      <Hardscape L={L} spec={spec} />
-      <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} onArrange={onArrange} />
-      <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} />
-      <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
-      <Mold L={L} amount={q(mold, 0.05)} />
-      <Critters L={L} state={state} lively={lively} />
-      <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} />
+      <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
+        <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
+        <Hardscape L={L} spec={spec} />
+        <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} onArrange={onArrange} />
+        <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} />
+        <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
+        <Mold L={L} amount={q(mold, 0.05)} />
+        <Critters L={L} state={state} lively={lively} />
+        <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} />
+      </JarRig>
     </>
   );
 }
 
 function CameraRig({ shape, baseY, extraTop }: { shape: Shape; baseY: number; extraTop: number }) {
-  const { camera, size, controls } = useThree();
+  const { camera, size } = useThree();
   useLayoutEffect(() => {
     const cam = camera as THREE.PerspectiveCamera;
     const h = shape.top - baseY + 0.35 + extraTop;
@@ -117,12 +116,7 @@ function CameraRig({ shape, baseY, extraTop }: { shape: Shape; baseY: number; ex
     const ty = baseY + h * 0.46;
     cam.position.set(0, ty + d * 0.2, d);
     cam.lookAt(0, ty, 0);
-    const c = controls as unknown as OrbitControlsImpl | null;
-    if (c) {
-      c.target.set(0, ty, 0);
-      c.update();
-    }
-  }, [camera, size.width, size.height, controls, shape, baseY, extraTop]);
+  }, [camera, size.width, size.height, shape, baseY, extraTop]);
   return null;
 }
 
@@ -197,7 +191,24 @@ function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSp
   const glass = useGlass();
   const geo = useMemo(() => glassGeometry(shape), [shape]);
   const film = useMemo(() => condensationMaterial(), []);
+  const rim = useMemo(() => rimMaterial(), []);
+  const filmMesh = useRef<THREE.Mesh>(null);
+  const nextWipe = useRef(0);
   const openTop = spec.lid === 'open';
+  const motion = useMotion();
+  // A tap on the glass wipes a clear spot where the finger touched it.
+  // Both walls the line of sight crosses are cleared, so you can actually see in.
+  const wipe = (e: ThreeEvent<MouseEvent>) => {
+    if (!isTap(e) || !filmMesh.current) return;
+    // r3f reports one hit per object; cast again for where the line leaves through the far wall.
+    const glassHits = new THREE.Raycaster(e.ray.origin, e.ray.direction).intersectObject(e.object, false).slice(0, 2);
+    for (const h of glassHits) {
+      const p = filmMesh.current.worldToLocal(h.point.clone());
+      const slot = (film.uniforms.uWipes!.value as THREE.Vector4[])[nextWipe.current++ % WIPES]!;
+      slot.set(p.x, p.y, p.z, film.uniforms.uClock!.value as number);
+    }
+    if (!e.intersections.slice(1).some((h) => interactiveHit(h.object))) nudge(motion, 0.4);
+  };
 
   // Cube with an open top: hide the top face of the box.
   const materials = useMemo(() => {
@@ -211,6 +222,7 @@ function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSp
     const u = film.uniforms;
     u.uCond!.value += (clamp(cond, 0, 1.6) - u.uCond!.value) * k;
     if (lively) u.uTime!.value += dt;
+    u.uClock!.value += dt;
     u.uNight!.value += ((night ? 1 : 0) - u.uNight!.value) * k;
     // Fogged glass also blurs what is behind it.
     glass.roughness = 0.03 + 0.14 * clamp((u.uCond!.value - 0.3) / 0.9);
@@ -228,8 +240,9 @@ function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSp
   return (
     <group>
       <group position={clocheTilt ? [0, 0.05, 0] : [0, 0, 0]} rotation={clocheTilt ? [0, 0, -0.035] : [0, 0, 0]}>
-        <mesh geometry={geo} material={materials} renderOrder={1} />
-        <mesh geometry={geo} material={film} scale={[0.985, 0.995, 0.985]} renderOrder={2} />
+        <mesh geometry={geo} material={materials} renderOrder={1} onClick={wipe} />
+        <mesh ref={filmMesh} geometry={geo} material={film} scale={[0.985, 0.995, 0.985]} renderOrder={2} />
+        <mesh geometry={geo} material={rim} scale={1.003} renderOrder={3} raycast={() => null} />
         {shape.kind === 'round' && !shape.openBottom && <Rim shape={shape} glass={glass} />}
         {spec.vessel === 'cloche' && <Knob y={shape.top + 0.05} glass={glass} />}
         {shape.kind === 'square' && <Frame shape={shape} wardian={spec.vessel === 'wardian'} />}
@@ -385,6 +398,14 @@ function Layers({ L, spec, wet, reservoir, waterlogged }: { L: Layout; spec: Ter
   }, [soil, soilSide, wet]);
 
   const subGeo = useMemo(() => layerGeometry(shape, drainTop, gy, 0.012), [shape, drainTop, gy]);
+  const motion = useMotion();
+  // Tapping the soil startles whatever lives near that spot.
+  const tapSoil = (e: ThreeEvent<MouseEvent>) => {
+    if (!isTap(e)) return;
+    e.stopPropagation();
+    const p = e.object.worldToLocal(e.point.clone());
+    disturb(motion, p.x, p.z);
+  };
   const barrierGeo = useMemo(() => layerGeometry(shape, drainTop - 0.006, drainTop + 0.006, 0.011), [shape, drainTop]);
   const waterGeo = useMemo(
     () => (hasDrain && reservoir > 0.02 ? layerGeometry(shape, floorY, floorY + (drainTop - floorY) * reservoir, 0.014) : null),
@@ -405,7 +426,7 @@ function Layers({ L, spec, wet, reservoir, waterlogged }: { L: Layout; spec: Ter
         </mesh>
       )}
       <mesh geometry={subGeo} material={soilSide} receiveShadow />
-      <mesh geometry={L.ground.geometry} material={soil} receiveShadow />
+      <mesh geometry={L.ground.geometry} material={soil} receiveShadow onClick={tapSoil} userData={{ interactive: true }} />
       {waterlogged && (
         <mesh geometry={L.ground.geometry} position={[0, 0.006, 0]} renderOrder={1}>
           <meshPhysicalMaterial color="#87b5c4" roughness={0.02} transparent opacity={0.28} depthWrite={false} />
@@ -512,48 +533,60 @@ function Plants({ L, spec, state, dry, onArrange }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids, L.groundFp, spec.seed]);
 
-  const controls = useThree((s) => s.controls) as unknown as OrbitControlsImpl | null;
+  const motion = useMotion();
   const [drag, setDrag] = useState<{ id: string; x: number; z: number } | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => {
+    if (!picked) return;
+    const t = setTimeout(() => setPicked(null), 4500);
+    return () => clearTimeout(t);
+  }, [picked]);
   const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), -L.gy), [L.gy]);
   const hit = useMemo(() => new THREE.Vector3(), []);
+  const group = useRef<THREE.Group>(null);
   const follow = (e: ThreeEvent<PointerEvent>) => {
-    if (!e.ray.intersectPlane(plane, hit)) return null;
+    if (!group.current) return null;
+    // The ray is in world space; the floor plane is in the jar's own (spun, rocked) space.
+    const local = e.ray.clone().applyMatrix4(group.current.matrixWorld.clone().invert());
+    if (!local.intersectPlane(plane, hit)) return null;
     const [x, z] = pointIn(L.groundFp, ...toUv(L.groundFp, hit.x, hit.z));
     return { x, z };
   };
-  const handlers = (id: string) => onArrange && {
-    onPointerOver: () => { document.body.style.cursor = 'grab'; },
-    onPointerOut: () => { document.body.style.cursor = ''; },
-    onPointerDown: (e: ThreeEvent<PointerEvent>) => {
+  const dragHandlers = (id: string): Handlers | undefined => onArrange && {
+    onPointerDown: (e) => {
       e.stopPropagation();
       (e.target as unknown as Element).setPointerCapture(e.pointerId);
-      if (controls) controls.enabled = false;
+      motion.locked = true;
       const [x, z] = places.get(id) ?? [0, 0];
       setDrag({ id, x, z });
     },
-    onPointerMove: (e: ThreeEvent<PointerEvent>) => {
+    onPointerMove: (e) => {
       if (drag?.id !== id) return;
       const p = follow(e);
       if (p) setDrag({ id, ...p });
     },
-    onPointerUp: (e: ThreeEvent<PointerEvent>) => {
+    onPointerUp: (e) => {
       (e.target as unknown as Element).releasePointerCapture(e.pointerId);
-      if (controls) controls.enabled = true;
-      if (drag?.id === id) onArrange(id, toUv(L.groundFp, drag.x, drag.z));
+      motion.locked = false;
+      if (drag?.id === id) {
+        const [x0, z0] = places.get(id) ?? [0, 0];
+        if (Math.hypot(drag.x - x0, drag.z - z0) > 0.02) onArrange(id, toUv(L.groundFp, drag.x, drag.z));
+      }
       setDrag(null);
     },
   };
 
   return (
-    <group>
+    <group ref={group}>
       {state.plants.map((pl) => {
         const [x, z] = places.get(pl.id) ?? [0, 0];
         const live = drag?.id === pl.id ? drag : null;
+        const s = q(Math.sqrt(clamp(pl.biomassG / (PLANT_MAX[pl.speciesId] ?? 1))), 0.025);
         return (
           <Plant
             key={pl.id} id={pl.id} speciesId={pl.speciesId} L={L} x={x} z={z} dry={dry} live={live}
-            s={q(Math.sqrt(clamp(pl.biomassG / (PLANT_MAX[pl.speciesId] ?? 1))), 0.025)} turgor={q(pl.turgor, 0.05)} health={q(pl.health, 0.05)}
-            handlers={handlers(pl.id)}
+            s={s} turgor={q(pl.turgor, 0.05)} health={q(pl.health, 0.05)}
+            handlers={dragHandlers(pl.id)} onTap={() => setPicked(pl.id)}
           />
         );
       })}
@@ -563,19 +596,37 @@ function Plants({ L, spec, state, dry, onArrange }: {
           <meshBasicMaterial color="#8cc497" transparent opacity={0.85} depthWrite={false} />
         </mesh>
       )}
+      {picked && !drag && (() => {
+        const pl = state.plants.find((p) => p.id === picked);
+        const at = places.get(picked);
+        if (!pl || !at) return null;
+        const sp = plantSpecies(pl.speciesId);
+        const st = plantStatus(pl);
+        const top = L.ground.heightAt(at[0], at[1]) + (0.08 + 0.22 * Math.sqrt(clamp(pl.biomassG / sp.maxBiomassG))) * L.k;
+        return (
+          <Html position={[at[0], top, at[1]]} center zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="jar-chip" role="status">
+              <strong>{sp.commonName}</strong>
+              <span className={`tone-${st.tone}`}>{st.word}, health {Math.round(pl.health * 100)}%</span>
+              {(pl.shade ?? 0) >= 0.2 && <span>In shade, {Math.round(pl.shade! * 100)}% of its light lost</span>}
+            </div>
+          </Html>
+        );
+      })()}
     </group>
   );
 }
 
-type Handlers = Partial<Record<'onPointerOver' | 'onPointerOut' | 'onPointerDown' | 'onPointerMove' | 'onPointerUp', (e: ThreeEvent<PointerEvent>) => void>>;
+type Handlers = Partial<Record<'onPointerDown' | 'onPointerMove' | 'onPointerUp', (e: ThreeEvent<PointerEvent>) => void>>;
 const HIT = new THREE.CylinderGeometry(0.07, 0.07, 0.12, 12).translate(0, 0.06, 0);
 const HIT_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 
-function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers }: {
+function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers, onTap }: {
   id: string; speciesId: string; L: Layout; x: number; z: number; s: number; turgor: number; health: number; dry: number;
   /** Where it is while being dragged; the plant is rebuilt for its new spot only once dropped. */
   live: { x: number; z: number } | null;
   handlers?: Handlers;
+  onTap: () => void;
 }) {
   const y = L.ground.heightAt(x, z);
   const parts = useMemo<Part[]>(() => {
@@ -603,15 +654,54 @@ function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers 
       if (!(p.material as THREE.MeshStandardMaterial).map) p.material.dispose();
     }
   }, [parts]);
+
+  // Sway: each plant lags behind the jar's rocking on a spring of its own,
+  // looser for tall, soft plants. A tap squashes and springs it back up.
+  const motion = useMotion();
+  const sway = useRef<THREE.Group>(null);
+  const spring = useRef({ lx: 0, lz: 0, vx: 0, vz: 0, sq: 0, sqv: 0, phase: hashSeed(id) % 7 });
+  const loose = speciesId.includes('fern') ? 1.4 : speciesId.includes('moss') ? 0.4 : 1;
+  useFrame((_, raw) => {
+    const dt = Math.min(raw, 1 / 30);
+    const sp = spring.current;
+    const tx = -motion.tiltXVel * 0.05 * loose;
+    const tz = -motion.tiltZVel * 0.05 * loose;
+    const k = 40 / loose;
+    sp.vx += (k * (tx - sp.lx) - 4 * sp.vx) * dt;
+    sp.vz += (k * (tz - sp.lz) - 4 * sp.vz) * dt;
+    sp.lx += sp.vx * dt;
+    sp.lz += sp.vz * dt;
+    sp.sqv += (-180 * sp.sq - 9 * sp.sqv) * dt;
+    sp.sq += sp.sqv * dt;
+    const g = sway.current;
+    if (g) {
+      g.rotation.set(sp.lx, 0, sp.lz);
+      g.scale.set(1 + sp.sq * 0.5, 1 - sp.sq, 1 + sp.sq * 0.5);
+    }
+  });
+  const tap = (e: ThreeEvent<MouseEvent>) => {
+    if (!isTap(e)) return;
+    e.stopPropagation();
+    spring.current.sqv += 3.2;
+    spring.current.vz += (spring.current.phase % 2 ? 1 : -1) * 1.5;
+    onTap();
+  };
+
   const at = live ?? { x, z };
   return (
-    <group position={[at.x, live ? L.ground.heightAt(live.x, live.z) + 0.02 : y, at.z]} scale={L.k} {...handlers}>
-      {parts.map((p, i) =>
-        p.instances
-          ? <InstancedParts key={i} geometry={p.geometry} material={p.material} items={p.instances.map((it) => ({ m: it.matrix, c: it.color }))} />
-          : <mesh key={i} geometry={p.geometry} material={p.material} castShadow receiveShadow />,
-      )}
-      {handlers && <mesh geometry={HIT} material={HIT_MAT} />}
+    <group position={[at.x, live ? L.ground.heightAt(live.x, live.z) + 0.02 : y, at.z]} scale={L.k}
+      userData={{ interactive: true }} onClick={tap}
+      onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = handlers ? 'grab' : 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = ''; }}
+      {...handlers}>
+      <group ref={sway}>
+        {parts.map((p, i) =>
+          p.instances
+            ? <InstancedParts key={i} geometry={p.geometry} material={p.material} items={p.instances.map((it) => ({ m: it.matrix, c: it.color }))} />
+            : <mesh key={i} geometry={p.geometry} material={p.material} castShadow receiveShadow />,
+        )}
+      </group>
+      <mesh geometry={HIT} material={HIT_MAT} />
     </group>
   );
 }

@@ -5,7 +5,7 @@ import { Jar } from './Jar.js';
 const Terrarium3D = lazy(() => import('../three/Terrarium3D.js'));
 
 let webgl: boolean | null = null;
-function hasWebGL() {
+export function hasWebGL() {
   if (webgl === null) {
     try {
       webgl = !!document.createElement('canvas').getContext('webgl2');

@@ -42,6 +42,8 @@ variables in `.env` it uses an in-memory gallery seeded with a few example jars.
 - **Builder:** six steps (vessel, layers, plants, clean-up crew, placement, name) starting from a recipe or blank, with a live preview, inline warnings, and a 90-day forecast that reruns as you design.
 - **Jar view:** conditions, issues with one-tap fixes, care actions (mist, air out, feed, remove mold, prune, change lid or placement), plant and animal rosters, trends and a journal.
 - **Time:** paused, real time (jars keep living while you are away), a day per second, or a week per second.
+- **Handle the jar:** drag to spin it; flick it and it rocks on its base and settles, with the plants swaying. Tap a plant for its name and health, tap the soil to startle the animals (springtails hop, isopods run, pill bugs roll up), tap mushrooms for a puff of spores, and tap fogged glass to wipe a clear spot that mists over again.
+- **Material swatches:** builder choices are small round previews rendered from the same 3D materials: soils, drainage, wood and stone, glass vessels and lids, each plant and animal, and the light of each placement.
 - **Arrange:** drag plants into place in the 3D builder. Tall plants shade what grows beneath them, and the forecast reruns as you move them.
 - **Room:** the scene around the jar is its placement: a window whose sky follows the jar's day and night, a grow light overhead, or a dim corner.
 - **Soil and air readings:** pH (from the mix, slowly acidifying), soil air (sours when waterlogged), vapour pressure deficit and daily light integral.

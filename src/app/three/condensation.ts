@@ -6,6 +6,9 @@ import * as THREE from 'three';
  * run down in streaks, wiping clear trails behind them. Nothing condenses below
  * the soil line, and the film is thickest on the cool upper glass.
  */
+/** How many wiped spots the glass remembers at once (two per tap: front and back walls). */
+export const WIPES = 8;
+
 export function condensationMaterial() {
   return new THREE.ShaderMaterial({
     transparent: true,
@@ -18,6 +21,9 @@ export function condensationMaterial() {
       uTop: { value: 2 },
       uNight: { value: 0 },
       uSquare: { value: 0 },
+      uClock: { value: 0 },
+      // Spots wiped clear by a finger: xyz on the glass, w when (negative: unused).
+      uWipes: { value: Array.from({ length: WIPES }, () => new THREE.Vector4(0, 0, 0, -1)) },
       uLightDir: { value: new THREE.Vector3(-0.5, 0.8, 0.4).normalize() },
     },
     vertexShader: /* glsl */ `
@@ -39,6 +45,8 @@ export function condensationMaterial() {
       uniform float uTop;
       uniform float uNight;
       uniform float uSquare;
+      uniform float uClock;
+      uniform vec4 uWipes[${WIPES}];
       uniform vec3 uLightDir;
       varying vec3 vObj;
       varying vec3 vNormalW;
@@ -124,6 +132,23 @@ export function condensationMaterial() {
         if (head > b.x) { bead = step(0.0001, head); bn = headN; }
         fog *= 1.0 - 0.9 * trail;
 
+        // A wiped spot is clear at once and fogs over again within about ten seconds.
+        // Water pushed aside piles up in a ring at the edge of the wiped spot.
+        float wipe = 0.0;
+        float ridge = 0.0;
+        for (int i = 0; i < ${WIPES}; i++) {
+          vec4 w = uWipes[i];
+          if (w.w < 0.0) continue;
+          float age = uClock - w.w;
+          float life = 1.0 - smoothstep(3.0, 11.0, age);
+          float r = 0.17 + 0.06 * min(age * 4.0, 1.0);
+          float d = length(vObj - w.xyz);
+          wipe = max(wipe, (1.0 - smoothstep(r * 0.6, r, d)) * life);
+          ridge = max(ridge, (1.0 - smoothstep(0.0, 0.035, abs(d - r))) * life);
+        }
+        fog = fog * (1.0 - wipe) + ridge * 0.22 * smoothstep(0.02, 0.3, c);
+        bead *= 1.0 - 0.95 * wipe;
+
         // Light the bead as a tiny lens bulging off the glass.
         vec3 N = normalize(gl_FrontFacing ? vNormalW : -vNormalW);
         vec3 T = normalize(cross(vec3(0.0, 1.0, 0.0), N) + 1e-4);
@@ -140,6 +165,35 @@ export function condensationMaterial() {
         vec3 col = vec3(0.9, 0.95, 0.94) * (1.0 - 0.45 * rim) + vec3(1.0) * (spec + glint);
         col *= mix(1.0, 0.32, uNight);
         gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.92));
+      }
+    `,
+  });
+}
+
+/** A bright edge where the glass turns away from you, as on thick, polished glass. */
+export function rimMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uStrength: { value: 0.32 } },
+    vertexShader: /* glsl */ `
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vN = normalize(mat3(modelMatrix) * normal);
+        vV = normalize(cameraPosition - wp.xyz);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uStrength;
+      varying vec3 vN;
+      varying vec3 vV;
+      void main() {
+        float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 3.0);
+        gl_FragColor = vec4(vec3(0.92, 0.96, 1.0) * f * uStrength, 1.0);
       }
     `,
   });

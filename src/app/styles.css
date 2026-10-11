@@ -390,3 +390,50 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .arrange-hint { margin-top: 8px; max-width: 46ch; }
 .jar3d.arranging { cursor: default; }
 .roster-note { display: block; font-size: 12px; font-weight: 400; color: var(--amber); }
+
+/* ------------------------------------------------------------------ in-jar labels */
+.jar-chip {
+  display: grid; gap: 1px; padding: 7px 11px 8px; border-radius: 10px; white-space: nowrap;
+  background: color-mix(in srgb, var(--tag) 88%, transparent); backdrop-filter: blur(8px);
+  border: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.35);
+  font-size: 12px; line-height: 1.35; color: var(--ink); transform: translateY(-100%);
+  animation: chip-in 0.18s ease-out;
+}
+.jar-chip strong { font: 650 14px/1.2 var(--font-display); }
+@keyframes chip-in { from { opacity: 0; transform: translateY(calc(-100% + 6px)); } }
+@media (prefers-reduced-motion: reduce) { .jar-chip { animation: none; } }
+
+/* ------------------------------------------------------------------ material swatches */
+.swatch-row { display: flex; flex-wrap: wrap; gap: 14px 10px; margin-top: 4px; }
+.swatch {
+  display: grid; justify-items: center; gap: 6px; width: 76px; padding: 0; border: 0; background: none;
+  font-size: 12px; line-height: 1.25; text-align: center; color: var(--muted);
+}
+.swatch-disc {
+  position: relative; display: block; width: 58px; height: 58px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06), 0 3px 8px -4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s cubic-bezier(0.3, 1.6, 0.5, 1), box-shadow 0.15s;
+  overflow: visible;
+}
+.swatch-disc img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; animation: swatch-in 0.25s ease-out; }
+.swatch-disc.empty { background: none; box-shadow: inset 0 0 0 1.5px var(--rule); }
+.swatch-disc.empty::after { content: ''; position: absolute; left: 50%; top: 18%; bottom: 18%; width: 1.5px; background: var(--rule); transform: rotate(45deg); }
+.swatch:hover:not(:disabled) .swatch-disc { transform: translateY(-2px) scale(1.05); }
+.swatch:active:not(:disabled) .swatch-disc { transform: scale(0.94); }
+.swatch.on { color: var(--ink); font-weight: 600; }
+.swatch.on .swatch-disc { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--moss), 0 4px 10px -4px rgba(0, 0, 0, 0.4); }
+.swatch:focus-visible { outline: none; }
+.swatch:focus-visible .swatch-disc { outline: 2px solid var(--dew); outline-offset: 5px; }
+.swatch-badge {
+  position: absolute; right: -4px; top: -4px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  display: grid; place-items: center; font: 700 12px/1 var(--font-body); font-variant-numeric: tabular-nums;
+  background: var(--moss); color: var(--moss-ink); box-shadow: 0 0 0 2px var(--bg);
+}
+@keyframes swatch-in { from { opacity: 0; transform: scale(0.9); } }
+@media (prefers-reduced-motion: reduce) { .swatch-disc, .swatch-disc img { transition: none; animation: none; } }
+.choice-note { margin-top: 10px; font-size: 14px; max-width: 60ch; }
+.choice-note strong { font-weight: 600; }
+.chosen { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; }
+.chosen li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; }
+.chosen li > span:first-child { min-width: 130px; font-weight: 600; }
