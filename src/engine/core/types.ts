@@ -28,6 +28,10 @@ export interface PlantSpecies {
   recoverPerDay: number;
   /** Health lost per day under severe stress. */
   declinePerDay: number;
+  /** Height at full size. Taller plants shade shorter neighbours (see plants.ts). */
+  heightCm: number;
+  /** Substrate pH the plant grows well in. Outside it, growth slows; it does not die of it. */
+  pH: { min: number; max: number };
   confidence: Confidence;
   notes: string;
 }
@@ -65,6 +69,10 @@ export interface PlantState {
   health: number;   // 0..1, slow-moving; 0 = dead
   turgor: number;   // 0..1, fast-moving; visible wilting
   lightEma: number; // running mean of hourly light factor
+  /** Where it is planted on the floor of the vessel: u, v in [-1, 1] (x left-right, v back (-1) to front (1)). */
+  at?: [number, number];
+  /** Share of light taken by taller neighbours, last hour (0..1). */
+  shade?: number;
 }
 
 export interface FaunaState {
@@ -84,6 +92,8 @@ export interface SubstrateProps {
   nutrientMgPerL: number;
   /** Fraction of excess water that drains to the false bottom each hour. */
   drainPerH: number;
+  /** Starting pH of the mix. */
+  pH?: number;
 }
 
 export interface Container {
@@ -111,6 +121,12 @@ export interface Pools {
   humusG: number;
   nutrientMg: number;
   moldG: number;
+  /** Driftwood (g dry). Rots very slowly and feeds the fungi that fruit as mushrooms. */
+  woodG?: number;
+  /** Fungal threads living in the wood, unseen until they fruit. */
+  myceliumG?: number;
+  /** Mushrooms standing in the jar right now (g fresh). */
+  mushroomG?: number;
 }
 
 export interface Climate {
@@ -125,6 +141,15 @@ export interface Climate {
   co2Ppm: number;
   /** 0 = clear glass, ~0.5 = light mist, >1 = streaming wet. */
   condensationIndex: number;
+  /** Vapour pressure deficit of the air, kPa: how hard the air pulls water from leaves. */
+  vpdKPa: number;
+}
+
+/** The substrate as roots experience it. */
+export interface Soil {
+  pH: number;
+  /** 1 = open, well-aired soil; 0 = waterlogged and anaerobic ("sour"). */
+  air: number;
 }
 
 export interface SimEvent { hour: number; type: string; message: string; subject?: string }
@@ -151,4 +176,8 @@ export interface TerrariumState {
   planted?: number;
   /** Set by airOut(): restore this ventilation at this hour. */
   ventRevert?: { hour: number; ventilation: number };
+  /** Optional so jars saved before these existed still load; step() fills them in. */
+  soil?: Soil;
+  /** Mushroom flushes: when the current one started (-1 if none) and when the last one ended. */
+  fungi?: { flushStartHour: number; lastFlushHour: number };
 }

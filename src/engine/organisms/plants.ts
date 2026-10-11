@@ -1,6 +1,7 @@
 import { CONFIG } from '../core/config.js';
 import { clamp, thermalPerformance, trapezoid } from '../core/math.js';
-import type { PlantSpecies, TerrariumState } from '../core/types.js';
+import type { PlantSpecies, PlantState, TerrariumState } from '../core/types.js';
+import { geometry } from '../environment/geometry.js';
 import { plantSpecies } from './species.js';
 
 /** Grams of fresh plant biomass a litre of container can hold before everything is crowded. */
@@ -10,6 +11,39 @@ export function lightFactor(ppfd: number, sp: PlantSpecies): number {
   if (ppfd <= sp.light.comp) return 0;
   const f = Math.min(1, (ppfd - sp.light.comp) / (sp.light.opt - sp.light.comp));
   return ppfd > sp.light.max ? f * Math.max(0, 1 - (ppfd - sp.light.max) / sp.light.max) : f;
+}
+
+/** How tall a plant stands now: its species' height scaled by how grown it is. */
+export function plantHeightCm(pl: Pick<PlantState, 'speciesId' | 'biomassG'>): number {
+  const sp = plantSpecies(pl.speciesId);
+  return sp.heightCm * Math.sqrt(clamp(pl.biomassG / sp.maxBiomassG));
+}
+
+/**
+ * Share of light each plant loses to taller neighbours. A plant casts shade over
+ * a circle about as wide as it is tall, and the shade is deeper the more it
+ * towers over the one below. Plants without a position (old saves) cast and get none.
+ * `floorHalfCm` converts layout units to centimetres.
+ */
+export function shading(plants: Pick<PlantState, 'speciesId' | 'biomassG' | 'at'>[], floorHalfCm: number): number[] {
+  const h = plants.map(plantHeightCm);
+  return plants.map((a, i) => {
+    if (!a.at) return 0;
+    let shade = 0;
+    plants.forEach((b, j) => {
+      if (j === i || !b.at || h[j]! <= h[i]! + 2) return;
+      const dist = Math.hypot(a.at![0] - b.at![0], a.at![1] - b.at![1]) * floorHalfCm;
+      const reach = 0.5 * h[j]!;
+      const overlap = clamp(1 - dist / Math.max(1, reach));
+      shade += overlap * 0.6 * ((h[j]! - h[i]!) / h[j]!);
+    });
+    return clamp(shade, 0, 0.7);
+  });
+}
+
+/** Growth multiplier for substrate pH: full speed in range, slower outside it. */
+export function pHFactor(pH: number, sp: PlantSpecies): number {
+  return 0.4 + 0.6 * trapezoid(pH, sp.pH.min - 1.2, sp.pH.min, sp.pH.max, sp.pH.max + 1.2);
 }
 
 /**
@@ -25,11 +59,15 @@ export function stepPlants(s: TerrariumState): number {
   const { climate: cl, pools: p } = s;
   const totalBiomass = s.plants.reduce((a, pl) => a + pl.biomassG, 0);
   const canopyRoom = clamp(1 - totalBiomass / (s.container.volumeL * CANOPY_G_PER_L));
+  const floorHalfCm = (Math.sqrt(geometry(s.container).floorM2) * 100) / 2;
+  const shade = shading(s.plants, floorHalfCm);
+  const pH = s.soil?.pH ?? 6.2;
   let transpiration = 0;
 
-  for (const pl of s.plants) {
+  for (const [i, pl] of s.plants.entries()) {
     const sp = plantSpecies(pl.speciesId);
-    const lightF = lightFactor(cl.ppfd, sp);
+    pl.shade = shade[i]!;
+    const lightF = lightFactor(cl.ppfd * (1 - pl.shade), sp);
     const waterF = trapezoid(cl.moisture, sp.moisture.min, sp.moisture.optLow, sp.moisture.optHigh, sp.moisture.max);
     const tempF = thermalPerformance(cl.airTempC, sp.tempC);
     const rhF = clamp((cl.rh - 0.5 * sp.rhMin) / (0.5 * sp.rhMin));
@@ -47,7 +85,7 @@ export function stepPlants(s: TerrariumState): number {
     );
 
     // Growth (only happens in the light, because lightF is 0 in the dark).
-    const limit = Math.min(lightF, waterF, tempF, rhF) * co2F * nutF * pl.turgor;
+    const limit = Math.min(lightF, waterF, tempF, rhF) * co2F * nutF * pHFactor(pH, sp) * pl.turgor;
     let growth = (sp.rgrPerDay / 12) * pl.biomassG * limit * (1 - pl.biomassG / sp.maxBiomassG) * canopyRoom;
     growth = Math.max(0, growth);
     const co2Need = growth * CONFIG.dryFraction * CONFIG.co2MgPerGDry;

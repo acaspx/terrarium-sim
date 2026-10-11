@@ -78,6 +78,11 @@ These are design conclusions drawn from the above, not sourced facts:
 - Lives 2 to 3 years, 60 to 85 F; starving isopods may gnaw soft-bodied tankmates ([Josh's Frogs](https://training.joshsfrogs.com/sp/porcellio-scaber-koi-isopods-10-count-jfpodpskoi)). The model extends this to nibbling plants when hungry, which keepers report but I did not source.
 - Estimated in code: brood size and timing, intake.
 
+### Isopod morphs: dairy cow (*Porcellio laevis*), rubber ducky (*Cubaris* sp.), magic potion (*Armadillidium vulgare*)
+
+- Character in the model follows widely repeated keeper descriptions: *P. laevis* is large, fast-breeding and a heavy eater; *Cubaris* are slow breeders that want warmth and high humidity; *A. vulgare* rolls up and tolerates drier conditions.
+- Not yet sourced here. All life-history numbers for these three are estimates and the first things to check against care sheets.
+
 ### Fungus gnats (*Bradysia*)
 
 - Breed in soil that stays too damp; springtails compete with the larvae for food; drying and ventilation are the fixes ([Highland Moss](https://highlandmoss.com/?p=180197)).
@@ -99,6 +104,16 @@ spike moss, cushion moss, maidenhair fern
 | Cushion moss | Low light, constant moisture, dislikes being soggy | Very slow, low waterlogging tolerance |
 | Maidenhair fern | Hard indoors, good under glass | Highest drought penalty |
 | Baby tears pilea | Small leaves, trailing, loves humidity | Mid-speed ground cover |
+| Bird's nest fern (*Asplenium nidus*) | Slow, upright rosette, rots if water sits in the crown (keeper knowledge, not yet sourced here) | Slow, tall: the strongest shade caster |
+| Lemon button fern (*Nephrolepis cordifolia* 'Duffii') | Compact and forgiving (keeper knowledge, not yet sourced here) | Mid-speed, medium height |
+
+pH ranges per plant (cushion moss on acid soil, maidenhair liking a little
+lime) and the starting pH of each mix (peat strongly acid, limed potting
+mixes near neutral) follow general horticultural knowledge and are not yet
+sourced here.
+
+Wood-decay fungi fruiting in terrariums is common in keeper reports; the
+timings in the model are estimates.
 
 **All plant numbers (PPFD ranges, growth rates, biomass caps) are estimates.**
 Guides describe light as "bright indirect" and growth as "fast / moderate /

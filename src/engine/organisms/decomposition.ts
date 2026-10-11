@@ -2,7 +2,7 @@ import { CONFIG } from '../core/config.js';
 import { clamp, thermalPerformance, trapezoid } from '../core/math.js';
 import type { TerrariumState } from '../core/types.js';
 
-const MICROBE_TEMP = { min: 2, opt: 28, max: 40 };
+export const MICROBE_TEMP = { min: 2, opt: 28, max: 40 };
 
 /**
  * Microbes and mold. Background microbial decay slowly turns detritus into
@@ -10,13 +10,16 @@ const MICROBE_TEMP = { min: 2, opt: 28, max: 40 };
  * blooms on fresh detritus when the jar is wet, humid and stagnant, and is
  * held down by grazing (see fauna.ts). A new build starts with a pulse of
  * labile detritus, so the classic first-month mold bloom emerges on its own.
+ * Soil short of air rots slowly and incompletely, as in a bog.
+ * Returns grams of organic matter decayed this hour (it acidifies the soil).
  */
-export function stepDecomposition(s: TerrariumState): void {
+export function stepDecomposition(s: TerrariumState): number {
   const { climate: cl, pools: p } = s;
   const m = CONFIG.mold;
   const tf = thermalPerformance(cl.airTempC, MICROBE_TEMP);
+  const aerobic = 0.35 + 0.65 * (s.soil?.air ?? 1);
 
-  const moistF = trapezoid(cl.moisture, 0.1, 0.5, 1.0, 1.5);
+  const moistF = trapezoid(cl.moisture, 0.1, 0.5, 1.0, 1.5) * aerobic;
   const decayed = (p.detritusG * CONFIG.decompPerDay * tf * moistF) / 24;
   p.detritusG -= decayed;
   p.co2Mg += decayed * CONFIG.respiredFraction * CONFIG.co2MgPerGDry;
@@ -44,4 +47,5 @@ export function stepDecomposition(s: TerrariumState): void {
   p.detritusG += death;
   // Spores are everywhere; mold can be beaten back but never eradicated.
   p.moldG = Math.max(m.sporeFloorG, p.moldG + growth - death);
+  return decayed + humusDecayed;
 }

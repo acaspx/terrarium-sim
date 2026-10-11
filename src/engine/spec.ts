@@ -6,7 +6,10 @@
  * choices are deferred (see docs/CUSTOMIZATION.md).
  */
 import { CONFIG } from './core/config.js';
+import { clamp, makeRng } from './core/math.js';
 import type { Container, SubstrateProps, TerrariumState } from './core/types.js';
+import { geometry } from './environment/geometry.js';
+import { shading } from './organisms/plants.js';
 import { faunaSpecies, plantSpecies, SPECIES } from './organisms/species.js';
 import { healthScore } from './sim/health.js';
 import { createTerrarium, run, type Setup } from './sim/terrarium.js';
@@ -32,7 +35,8 @@ export interface TerrariumSpec {
   substrate: SubstrateId;
   depth: DepthId;
   hardscape: HardscapeId[];
-  plants: { speciesId: string; size: PlantSizeId }[];
+  /** `at` is where it is planted, u and v in [-1, 1]; left out, the layout is automatic. */
+  plants: { speciesId: string; size: PlantSizeId; at?: [number, number] }[];
   fauna: { speciesId: string; count: number }[];
   placement: PlacementId;
   growLight: GrowLightId;
@@ -70,10 +74,10 @@ export const DRAINAGE: (Option<DrainageId> & { fraction: number })[] = [
 ];
 
 export const SUBSTRATES: (Option<SubstrateId> & { props: SubstrateProps; extraDetritus: number; color: string })[] = [
-  { id: 'abg', label: 'ABG mix', detail: 'Bark, tree fern, charcoal and peat. Airy and fast draining: the vivarium standard.', props: { fieldCapacityGPerL: 300, humusGPerL: 120, nutrientMgPerL: 100, drainPerH: 0.6 }, extraDetritus: 0, color: '#5b4330' },
-  { id: 'bioactive', label: 'Bioactive tropical mix', detail: 'Coir, peat, bark and worm castings. Holds more water, feeds plants and crew.', props: { fieldCapacityGPerL: 380, humusGPerL: 170, nutrientMgPerL: 140, drainPerH: 0.45 }, extraDetritus: 1, color: '#4a3526' },
-  { id: 'peat', label: 'Peat and sphagnum', detail: 'A sponge. Mosses love it; roots can sour if it stays wet.', props: { fieldCapacityGPerL: 460, humusGPerL: 200, nutrientMgPerL: 80, drainPerH: 0.3 }, extraDetritus: 0, color: '#6b4b31' },
-  { id: 'potting-soil', label: 'Bagged potting soil', detail: 'Dense and rich. Compacts, stays soggy, and grows more mold.', props: { fieldCapacityGPerL: 420, humusGPerL: 230, nutrientMgPerL: 240, drainPerH: 0.2 }, extraDetritus: 4, color: '#3d2f26' },
+  { id: 'abg', label: 'ABG mix', detail: 'Bark, tree fern, charcoal and peat. Airy and fast draining: the vivarium standard. Slightly acid, about pH 5.8.', props: { fieldCapacityGPerL: 300, humusGPerL: 120, nutrientMgPerL: 100, drainPerH: 0.6, pH: 5.8 }, extraDetritus: 0, color: '#5b4330' },
+  { id: 'bioactive', label: 'Bioactive tropical mix', detail: 'Coir, peat, bark and worm castings. Holds more water, feeds plants and crew. Near neutral, about pH 6.3.', props: { fieldCapacityGPerL: 380, humusGPerL: 170, nutrientMgPerL: 140, drainPerH: 0.45, pH: 6.3 }, extraDetritus: 1, color: '#4a3526' },
+  { id: 'peat', label: 'Peat and sphagnum', detail: 'A sponge, and acid (about pH 4.2). Mosses love it; most other plants grow slowly in it, and roots can sour if it stays wet.', props: { fieldCapacityGPerL: 460, humusGPerL: 200, nutrientMgPerL: 80, drainPerH: 0.3, pH: 4.2 }, extraDetritus: 0, color: '#6b4b31' },
+  { id: 'potting-soil', label: 'Bagged potting soil', detail: 'Dense and rich. Compacts, stays soggy, and grows more mold.', props: { fieldCapacityGPerL: 420, humusGPerL: 230, nutrientMgPerL: 240, drainPerH: 0.2, pH: 6.2 }, extraDetritus: 4, color: '#3d2f26' },
 ];
 
 export const DEPTHS: (Option<DepthId> & { fraction: number })[] = [
@@ -83,7 +87,7 @@ export const DEPTHS: (Option<DepthId> & { fraction: number })[] = [
 ];
 
 export const HARDSCAPE: (Option<HardscapeId> & { detritusPerL: number })[] = [
-  { id: 'wood', label: 'Driftwood', detail: 'Molds at first, then feeds isopods for years.', detritusPerL: 2 },
+  { id: 'wood', label: 'Driftwood', detail: 'Molds at first, then feeds isopods for years. In a humid jar it may sprout mushrooms.', detritusPerL: 2 },
   { id: 'stone', label: 'Stone', detail: 'Inert. Takes up a little air space.', detritusPerL: 0 },
   { id: 'leaf-litter', label: 'Leaf litter', detail: 'Food and cover for the clean-up crew.', detritusPerL: 5 },
 ];
@@ -124,7 +128,34 @@ export const CREW_COUNTS: Record<string, number[]> = {
   springtail: [50, 150],
   'dwarf-white-isopod': [10, 20, 40],
   'rough-woodlouse': [5, 10],
+  'dairy-cow-isopod': [5, 10],
+  'rubber-ducky-isopod': [4, 8],
+  'magic-potion-isopod': [5, 10],
 };
+
+/** Driftwood mass, g dry per litre of vessel. */
+const WOOD_G_PER_L = 12;
+
+/**
+ * Where plants go when the keeper has not placed them: spread left to right in
+ * planting order, tall ones toward the back, ground covers toward the front.
+ */
+export function autoLayout(plants: { speciesId: string }[], seed: number): [number, number][] {
+  const n = plants.length;
+  return plants.map((p, i) => {
+    const r = makeRng(seed * 31 + i * 7 + 3);
+    const h = plantSpecies(p.speciesId).heightCm;
+    const u = -0.72 + (1.44 * (i + 0.5)) / Math.max(1, n) + (r() - 0.5) * 0.22;
+    const v = 0.5 - 1.1 * Math.min(1, h / 32) + (r() - 0.5) * 0.25;
+    return [clamp(u, -0.9, 0.9), clamp(v, -0.9, 0.9)];
+  });
+}
+
+/** Positions for every plant in the design, filling gaps with the automatic layout. */
+export function layoutOf(spec: Pick<TerrariumSpec, 'plants' | 'seed'>): [number, number][] {
+  const auto = autoLayout(spec.plants, spec.seed);
+  return spec.plants.map((p, i) => p.at ?? auto[i]!);
+}
 
 /** Grams of fresh plant per litre a vessel can hold before everything is crowded (matches plants.ts). */
 const CANOPY_G_PER_L = 12;
@@ -163,14 +194,16 @@ export function specToSetup(spec: TerrariumSpec): Setup {
     room: { tempC: find(ROOMS, spec.room).tempC, swingC: 2, rh: 0.45 },
     substrate: sub.props,
   };
+  const layout = layoutOf(spec);
   const detritusPerL = 8 + sub.extraDetritus + spec.hardscape.reduce((a, h) => a + find(HARDSCAPE, h).detritusPerL, 0);
   return {
     seed: spec.seed,
     container,
     initialMoisture: find(MOISTURES, spec.startMoisture).fraction,
     initialDetritusG: detritusPerL * substrateL,
-    plants: spec.plants.map((p) => ({ speciesId: p.speciesId, biomassG: plantBiomass(p.speciesId, p.size) })),
+    plants: spec.plants.map((p, i) => ({ speciesId: p.speciesId, biomassG: plantBiomass(p.speciesId, p.size), at: layout[i] })),
     fauna: spec.fauna.filter((f) => f.count > 0),
+    woodG: spec.hardscape.includes('wood') ? WOOD_G_PER_L * spec.sizeL : 0,
   };
 }
 
@@ -194,6 +227,7 @@ export function checkSpec(spec: TerrariumSpec): SpecIssue[] {
   const lid = find(LIDS, spec.lid);
   const closed = lid.vent < 0.1;
   const room = find(ROOMS, spec.room);
+  const sub = find(SUBSTRATES, spec.substrate);
 
   if (spec.placement === 'south-window' && closed)
     out.push({ severity: 'critical', target: 'placement', message: 'A closed vessel in direct sun works like a greenhouse and overheats.' });
@@ -231,12 +265,30 @@ export function checkSpec(spec: TerrariumSpec): SpecIssue[] {
       out.push({ severity: 'info', target: p.speciesId, message: `${sp.commonName} grows fast. In a vessel this size it will need regular pruning.` });
     if (sp.moisture.max <= 1.05 && spec.drainage === 'none')
       out.push({ severity: 'warn', target: p.speciesId, message: `${sp.commonName} browns and rots if it sits wet.` });
+    const pH = sub.props.pH ?? 6.2;
+    if (pH < sp.pH.min - 0.3)
+      out.push({ severity: 'info', target: p.speciesId, message: `${sp.commonName} likes less acid soil than ${sub.label.replace(/^(?!ABG)./, (c) => c.toLowerCase())}. It will grow slowly.` });
+    else if (pH > sp.pH.max + 0.3)
+      out.push({ severity: 'info', target: p.speciesId, message: `${sp.commonName} prefers more acid soil, such as peat. It will grow slowly here.` });
   }
+
+  // Shade, judged a few months in, when plants have filled out.
+  const layout = layoutOf(spec);
+  const grown = spec.plants.map((p, i) => ({ speciesId: p.speciesId, biomassG: 0.6 * plantSpecies(p.speciesId).maxBiomassG, at: layout[i] }));
+  const g = geometry(specToSetup(spec).container);
+  const shade = shading(grown, (Math.sqrt(g.floorM2) * 100) / 2);
+  const shaded = new Set<string>();
+  shade.forEach((x, i) => {
+    const sp = plantSpecies(spec.plants[i]!.speciesId);
+    if (x < 0.3 || shaded.has(sp.id)) return;
+    shaded.add(sp.id);
+    out.push({ severity: 'info', target: sp.id, message: `One ${sp.commonName.toLowerCase()} will sit in the shade of a taller plant. Move it to the side, or pick a shade lover.` });
+  });
 
   for (const f of spec.fauna) {
     if (f.count <= 0) continue;
     const sp = faunaSpecies(f.speciesId);
-    if (f.speciesId === 'rough-woodlouse' && spec.sizeL < 12)
+    if (sp.intakeG.adult >= 0.005 && spec.sizeL < 12)
       out.push({ severity: 'warn', target: f.speciesId, message: 'Big appetites for a small vessel. They will need regular feeding or start on the plants.' });
     if (spec.lid === 'open' && sp.moisture.min >= 0.25)
       out.push({ severity: 'warn', target: f.speciesId, message: `${sp.commonName}s need damp soil. An open top makes that hard to keep.` });
@@ -259,18 +311,29 @@ export interface Forecast {
   plantsStart: number;
   moldPeakDay: number | null;
   headlines: string[];
+  /** The jar at regular intervals, for previewing how a design develops. */
+  snapshots: { day: number; state: TerrariumState }[];
 }
 
+const snap = (s: TerrariumState) => ({ day: Math.floor(s.hour / 24), state: structuredClone({ ...s, events: [] }) });
+
 /** Run the design forward in time so the builder can show where it is heading. */
-export function forecast(spec: TerrariumSpec, days = 90): Forecast {
+export function forecast(spec: TerrariumSpec, days = 90, snapshotEvery = 15): Forecast {
   const s = buildTerrarium(spec);
   const scores: number[] = [];
+  const snapshots: Forecast['snapshots'] = [];
   let moldPeak = 0;
   let moldPeakDay: number | null = null;
   const visible = 0.1 * s.container.substrateL;
   for (let d = 0; d < days; d++) {
     run(s, 24);
     scores.push(healthScore(s));
+    // Snapshot in the early afternoon of the day, so the preview has the lights on.
+    if ((d + 1) % snapshotEvery === 0) {
+      const t = structuredClone(s);
+      run(t, 14);
+      snapshots.push(snap(t));
+    }
     if (s.pools.moldG > Math.max(moldPeak, visible)) {
       moldPeak = s.pools.moldG;
       moldPeakDay = d + 1;
@@ -284,6 +347,8 @@ export function forecast(spec: TerrariumSpec, days = 90): Forecast {
     const cleared = s.pools.moldG < visible;
     headlines.push(cleared ? `Mold blooms around day ${moldPeakDay}, then clears.` : `Mold blooms around day ${moldPeakDay} and is still visible at day ${days}.`);
   }
+  const flush = s.events.find((e) => e.type === 'mushrooms');
+  if (flush) headlines.push(`Mushrooms come up on the driftwood around day ${Math.floor(flush.hour / 24)}.`);
   const springtails = s.fauna.find((f) => f.speciesId === 'springtail');
   if (springtails) headlines.push(`About ${Math.round((springtails.juveniles + springtails.adults) / 10) * 10} springtails by day ${days}.`);
   const fast = s.plants.find((p) => p.biomassG > 0.85 * plantSpecies(p.speciesId).maxBiomassG);
@@ -298,6 +363,7 @@ export function forecast(spec: TerrariumSpec, days = 90): Forecast {
     plantsStart: spec.plants.length,
     moldPeakDay,
     headlines,
+    snapshots,
   };
 }
 
@@ -344,6 +410,21 @@ export const RECIPES: { id: string; label: string; detail: string; spec: Terrari
       plants: [{ speciesId: 'fittonia', size: 'plug' }, { speciesId: 'cushion-moss', size: 'small' }],
       fauna: [{ speciesId: 'springtail', count: 50 }],
       placement: 'east-window',
+    },
+  },
+  {
+    id: 'fern-cabinet', label: 'Fern cabinet', detail: "A Wardian case of ferns over moss, with pill bugs and a log that may sprout mushrooms.",
+    spec: {
+      ...BLANK_SPEC, name: 'Fern cabinet', vessel: 'wardian', sizeL: 40, lid: 'sealed', substrate: 'bioactive', depth: 'deep',
+      hardscape: ['wood', 'leaf-litter'],
+      plants: [
+        { speciesId: 'birds-nest-fern', size: 'small', at: [-0.15, -0.55] },
+        { speciesId: 'lemon-button-fern', size: 'small', at: [0.6, -0.45] },
+        { speciesId: 'spike-moss', size: 'small', at: [-0.6, 0.35] },
+        { speciesId: 'baby-tears-pilea', size: 'small', at: [0.45, 0.45] },
+      ],
+      fauna: [{ speciesId: 'springtail', count: 150 }, { speciesId: 'magic-potion-isopod', count: 10 }],
+      placement: 'grow-light', growLight: 'medium',
     },
   },
 ];
