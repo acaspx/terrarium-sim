@@ -32,6 +32,7 @@ export function Detail({ id }: { id: string }) {
         <div className="detail-jar">
           <div className="stage-3d">
             <Jar3D spec={j.spec} state={s} title={`${j.spec.name}, day ${dayOf(s)}`} />
+            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
           </div>
           <p className="jar-caption">
             Day {dayOf(s)}, {clockOf(s)}. Lights {s.climate.lightOn ? 'on' : 'off'}.

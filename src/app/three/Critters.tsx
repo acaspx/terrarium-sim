@@ -5,12 +5,13 @@ import { makeRng } from '../../engine/core/math.js';
 import type { TerrariumState } from '../../engine/index.js';
 import type { Layout } from './layout.js';
 import { clamp, hashSeed } from './noise.js';
+import { shakeOf, useMotion } from './rig.js';
 import { shellTexture } from './textures.js';
 import { footprint, insideFp, pointIn } from './vessel.js';
 
 type Motion = 'hop' | 'crawl' | 'fly';
 
-interface Look {
+export interface Look {
   /** Half-extents of the body: width, height, length. */
   scale: [number, number, number];
   color: string;
@@ -20,6 +21,8 @@ interface Look {
   speed: number;
   rough: number;
   motion: Motion;
+  /** Pill bugs roll into a ball when startled instead of running. */
+  rolls?: boolean;
   /** How many to draw for a population, and whether they hide by day. */
   count: (pop: number, lightOn: boolean) => number;
 }
@@ -28,13 +31,13 @@ const big = (cap: number, perShown: number, dayShare: number) => (pop: number, l
   Math.round(Math.min(cap, Math.ceil(pop / perShown)) * (lightOn ? dayShare : 1));
 
 /** What each animal looks like, and how many of a colony are out where you can see them. */
-const LOOKS: Record<string, Look> = {
+export const LOOKS: Record<string, Look> = {
   springtail: { scale: [0.0045, 0.0035, 0.009], color: '#eef0ea', speed: 0, rough: 0.5, motion: 'hop', count: (p) => Math.min(45, Math.round(Math.log10(p + 1) * 11)) },
   'dwarf-white-isopod': { scale: [0.012, 0.007, 0.02], color: '#eceee6', speed: 0.025, rough: 0.45, motion: 'crawl', count: (p) => Math.min(16, Math.ceil(Math.log2(p + 1) * 1.6)) },
   'rough-woodlouse': { scale: [0.022, 0.011, 0.036], color: '#5d6268', speed: 0.035, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.35) },
   'dairy-cow-isopod': { scale: [0.024, 0.012, 0.04], color: '#ffffff', shell: 'dairy-cow', speed: 0.05, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.5) },
   'rubber-ducky-isopod': { scale: [0.016, 0.011, 0.024], color: '#5f5750', head: { color: '#f2c230', scale: [0.011, 0.008, 0.008] }, speed: 0.015, rough: 0.4, motion: 'crawl', count: big(8, 1.5, 0.5) },
-  'magic-potion-isopod': { scale: [0.02, 0.013, 0.03], color: '#ffffff', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', count: big(10, 2, 0.5) },
+  'magic-potion-isopod': { scale: [0.02, 0.013, 0.03], color: '#ffffff', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', rolls: true, count: big(10, 2, 0.5) },
   'fungus-gnat': { scale: [0.006, 0.006, 0.009], color: '#1e1e1e', speed: 0.18, rough: 0.6, motion: 'fly', count: (p) => Math.min(12, Math.ceil(p / 12)) },
 };
 const FALLBACK: Look = { scale: [0.015, 0.009, 0.024], color: '#8a8a84', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
@@ -50,7 +53,14 @@ export function Critters({ L, state, lively }: { L: Layout; state: TerrariumStat
   return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} />)}</>;
 }
 
-interface Bug { x: number; z: number; y: number; h: number; t: number; vx: number; vy: number; vz: number; phase: number }
+interface Bug {
+  x: number; z: number; y: number; h: number; t: number; vx: number; vy: number; vz: number; phase: number;
+  /** Clock time until which it is running away, or rolled up. */
+  flee: number;
+  curl: number;
+}
+/** How far a tap on the soil carries, in scene units. */
+const STARTLE_RADIUS = 0.45;
 const BODY = new THREE.SphereGeometry(1, 12, 8);
 
 function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; L: Layout; lively: boolean }) {
@@ -63,7 +73,7 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
     return Array.from({ length: n }, () => {
       const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
       const a = r() * Math.PI * 2;
-      return { x, z, y: L.gy + 0.2 + r() * 0.6, h: a, t: r() * 4, vx: Math.cos(a) * 0.1, vy: 0, vz: Math.sin(a) * 0.1, phase: r() * 10 };
+      return { x, z, y: L.gy + 0.2 + r() * 0.6, h: a, t: r() * 4, vx: Math.cos(a) * 0.1, vy: 0, vz: Math.sin(a) * 0.1, phase: r() * 10, flee: 0, curl: 0 };
     });
   }, [id, n, L]);
   const tmp = useMemo(() => ({
@@ -71,13 +81,45 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
     s: new THREE.Vector3(...look.scale), hs: new THREE.Vector3(...(look.head?.scale ?? [0, 0, 0])),
   }), [look]);
 
+  const motion = useMotion();
+  const seen = useRef(0);
+  const ball = useMemo(() => new THREE.Vector3(look.scale[0] * 1.1, look.scale[0] * 1.1, look.scale[0] * 1.1), [look]);
+
+  /** Taps on the soil since last frame, and a hard shake, startle the animals nearby. */
+  const startle = () => {
+    const now = motion.clock;
+    const fresh = motion.disturbances.filter((d) => d.t > seen.current);
+    seen.current = now;
+    const shaken = shakeOf(motion) > 0.8;
+    if (!fresh.length && !shaken) return;
+    for (const b of bugs) {
+      const near = fresh.find((d) => Math.hypot(b.x - d.x, b.z - d.z) < STARTLE_RADIUS);
+      if (!near && !shaken) continue;
+      if (look.motion === 'hop') {
+        b.t = -0.001; // hop now
+        if (near) b.h = Math.atan2(b.x - near.x, b.z - near.z);
+      } else if (look.rolls) {
+        b.curl = now + 3 + Math.random() * 2;
+      } else if (look.motion === 'crawl') {
+        b.flee = now + 1.5 + Math.random();
+        if (near) b.h = Math.atan2(b.x - near.x, b.z - near.z);
+      } else {
+        // Gnats lift off.
+        b.vy += 0.15;
+      }
+    }
+  };
+
   const write = (dt: number) => {
     const mesh = ref.current;
     if (!mesh) return;
     const fp = L.groundFp;
+    if (dt > 0) startle();
+    const now = motion.clock;
     for (let i = 0; i < bugs.length; i++) {
       const b = bugs[i]!;
       let y: number;
+      let scale = tmp.s;
       if (look.motion === 'fly') {
         b.vx += (Math.random() - 0.5) * dt * 1.4;
         b.vy += (Math.random() - 0.5) * dt * 1.0;
@@ -107,20 +149,27 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
           if (insideFp(fp, nx, nz)) { b.x = nx; b.z = nz; }
         }
         y = L.ground.heightAt(b.x, b.z) + 0.005 + hop;
+      } else if (b.curl > now) {
+        // Rolled into a ball: still, round, waiting it out.
+        y = L.ground.heightAt(b.x, b.z) + ball.y * 0.9;
+        scale = ball;
       } else {
-        // Crawlers wander, turning gently, and turn back at the glass.
-        b.h += Math.sin(b.phase + performance.now() / 1700) * dt * 1.2;
-        const nx = b.x + Math.sin(b.h) * look.speed * dt;
-        const nz = b.z + Math.cos(b.h) * look.speed * dt;
+        // Crawlers wander, turning gently, and turn back at the glass. Startled, they run.
+        const speed = look.speed * (b.flee > now ? 4 : 1);
+        b.h += Math.sin(b.phase + performance.now() / 1700) * dt * (b.flee > now ? 0.3 : 1.2);
+        const nx = b.x + Math.sin(b.h) * speed * dt;
+        const nz = b.z + Math.cos(b.h) * speed * dt;
         if (insideFp(fp, nx, nz, 0.02)) { b.x = nx; b.z = nz; } else b.h += Math.PI * 0.7;
         y = L.ground.heightAt(b.x, b.z) + look.scale[1] * 0.7;
       }
       tmp.e.set(0, b.h, 0);
       tmp.q.setFromEuler(tmp.e);
       tmp.p.set(b.x, y, b.z);
-      tmp.m.compose(tmp.p, tmp.q, tmp.s);
+      tmp.m.compose(tmp.p, tmp.q, scale);
       mesh.setMatrixAt(i, tmp.m);
       if (heads.current) {
+        if (scale === ball) tmp.hs.setScalar(0);
+        else tmp.hs.set(...(look.head?.scale ?? [0, 0, 0]));
         tmp.p.set(b.x + Math.sin(b.h) * look.scale[2] * 0.85, y, b.z + Math.cos(b.h) * look.scale[2] * 0.85);
         tmp.m.compose(tmp.p, tmp.q, tmp.hs);
         heads.current.setMatrixAt(i, tmp.m);
@@ -132,7 +181,8 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
 
   useLayoutEffect(() => write(0));
   useFrame((_, dt) => {
-    if (lively) write(Math.min(dt, 0.05));
+    // Startled animals move even when the jar is otherwise still.
+    if (lively || motion.disturbances.some((d) => d.t > seen.current)) write(Math.min(dt, 0.05));
   });
   if (n === 0) return null;
   return (
