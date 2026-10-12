@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { plantStatus } from '../format.js';
 import { ContactShadows, Environment, Html, Lightformer } from '@react-three/drei';
@@ -103,7 +103,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRot
       <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} quality={quality} />
       {!bare && <Room placement={spec.placement} lightOn={cl.lightOn} wall={wall} top={L.shape.top} baseY={L.baseY} />}
       {!bare && <Shelf y={L.baseY} deep={view === 'iso'} />}
-      <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={quality === 'high' ? 512 : 256} frames={1} color="#1d1a14" />
+      <GroundShadow key={spec.vessel} y={L.baseY + 0.002} resolution={quality === 'high' ? 512 : 256} />
 
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
         <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
@@ -149,15 +149,32 @@ function Lights({ lightOn, ppfd, placement, quality }: { lightOn: boolean; ppfd:
         shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} shadow-normalBias={0.02}
         shadow-camera-left={-2} shadow-camera-right={2} shadow-camera-top={2.5} shadow-camera-bottom={-1} shadow-camera-near={0.5} shadow-camera-far={14}
       />
-      <Environment resolution={quality === 'high' ? 256 : 128} frames={1}>
-        <Lightformer form="rect" intensity={2.2} position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
-        <Lightformer form="rect" intensity={4} position={[-5, 2.2, 1.5]} rotation={[0, Math.PI / 2, 0]} scale={[2.4, 3.6, 1]} />
-        <Lightformer form="rect" intensity={0.8} position={[5, 1.5, -1]} rotation={[0, -Math.PI / 2, 0]} scale={[4, 2, 1]} />
-        <Lightformer form="rect" intensity={0.5} position={[0, 1, -6]} scale={[10, 3, 1]} color="#cfe0d6" />
-      </Environment>
+      <Studio resolution={quality === 'high' ? 256 : 128} />
     </>
   );
 }
+
+/**
+ * The soft studio light the glass reflects. It is rendered once into an environment map.
+ * Memoised so that re-rendering the scene (every care action, every sim hour) cannot hand
+ * it fresh children, which would make it render the map again mid-frame and blink the
+ * reflections.
+ */
+const Studio = memo(function Studio({ resolution }: { resolution: number }) {
+  return (
+    <Environment resolution={resolution} frames={1}>
+      <Lightformer form="rect" intensity={2.2} position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
+      <Lightformer form="rect" intensity={4} position={[-5, 2.2, 1.5]} rotation={[0, Math.PI / 2, 0]} scale={[2.4, 3.6, 1]} />
+      <Lightformer form="rect" intensity={0.8} position={[5, 1.5, -1]} rotation={[0, -Math.PI / 2, 0]} scale={[4, 2, 1]} />
+      <Lightformer form="rect" intensity={0.5} position={[0, 1, -6]} scale={[10, 3, 1]} color="#cfe0d6" />
+    </Environment>
+  );
+});
+
+/** The soft shadow under the jar, drawn once per vessel; memoised for the same reason as Studio. */
+const GroundShadow = memo(function GroundShadow({ y, resolution }: { y: number; resolution: number }) {
+  return <ContactShadows position={[0, y, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={resolution} frames={1} color="#1d1a14" />;
+});
 
 /** The surface the jar stands on. Seen from a raised corner it needs more depth to read as a tabletop. */
 function Shelf({ y, deep }: { y: number; deep: boolean }) {
@@ -685,9 +702,8 @@ function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers,
   }, [speciesId, id, s, turgor, health, dry, L, x, z, y]);
   useEffect(() => () => {
     for (const p of parts) {
-      if (!p.owned) continue;
-      p.geometry.dispose();
-      if (!(p.material as THREE.MeshStandardMaterial).map) p.material.dispose();
+      if (p.owned) p.geometry.dispose();
+      if (p.ownsMaterial) p.material.dispose();
     }
   }, [parts]);
 
@@ -764,7 +780,12 @@ function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }
 }
 
 function Mold({ L, amount }: { L: Layout; amount: number }) {
-  const { items, mat } = useMemo(() => {
+  // One material for the life of the view: only its opacity follows the mold, so no recompiles.
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({ map: moldTexture(), transparent: true, depthWrite: false, roughness: 1 }), []);
+  useEffect(() => {
+    mat.opacity = 0.55 + 0.45 * amount;
+  }, [mat, amount]);
+  const items = useMemo(() => {
     const r = makeRng(9);
     const n = amount > 0.05 ? Math.ceil(amount * 9) : 0;
     const items = Array.from({ length: n }, () => {
@@ -779,10 +800,10 @@ function Mold({ L, amount }: { L: Layout; amount: number }) {
         c: new THREE.Color('#ffffff'),
       };
     });
-    const mat = new THREE.MeshStandardMaterial({ map: moldTexture(), transparent: true, depthWrite: false, opacity: 0.55 + 0.45 * amount, roughness: 1 });
-    return { items, mat };
+    return items;
   }, [L, amount]);
   return <InstancedParts geometry={PLANE} material={mat} items={items} cast={false} />;
 }
 const PLANE = new THREE.PlaneGeometry(1, 1);
+
 

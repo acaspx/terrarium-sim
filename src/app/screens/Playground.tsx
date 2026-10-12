@@ -13,6 +13,7 @@ import { Segmented } from '../ui/controls.js';
 import { KeeperForm } from '../ui/KeeperForm.js';
 import { dayOfState, grownNow, JarStill, scoreOf, useGrown } from '../ui/Living.js';
 import { TimeLapse } from '../ui/TimeLapse.js';
+import { FOCUS_LABEL, useSectionFocus } from '../ui/useSectionFocus.js';
 import { lifeOf, type Moment } from '../../playground/living.js';
 import type { TerrariumState } from '../../engine/index.js';
 
@@ -238,6 +239,8 @@ export function SharedJar({ id }: { id: string }) {
   const [life, setLife] = useState<Moment[] | null>(null);
   const [showing, setShowing] = useState<TerrariumState | null>(null);
   const show = useCallback((st: TerrariumState | null) => setShowing(st), []);
+  // The section being read decides what the view beside it frames, as in the builder.
+  const { ref: bodyRef, focus, setFocus, claim } = useSectionFocus(!!s);
 
   useEffect(() => {
     getShared(id).then(setS).catch((e: Error) => setError(e.message));
@@ -308,32 +311,11 @@ export function SharedJar({ id }: { id: string }) {
   };
 
   return (
-    <main className="detail-page">
+    <main className="detail-page workbench-page">
       <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
-      <div className="detail">
-        <div className="detail-jar">
-          <div className="stage-3d">
-            <Jar3D spec={s.spec} state={showing ?? st} autoRotate={!life} title={`${s.spec.name} by @${s.keeper}, day ${today}`} />
-            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
-          </div>
-          {life ? (
-            <TimeLapse moments={life} onShow={show} onClose={() => setLife(null)} />
-          ) : (
-            <div className="preview-bar">
-              <button type="button" className="button" onClick={() => setLife(lifeOf(s, Date.now()))}>
-                <Film size={16} aria-hidden="true" /> Watch its life
-              </button>
-              <span className="hint">{(s.frameCount ?? s.frames?.length ?? 0) > 0 ? `From planting to today, a week at a time.` : `From the day it was shared to today.`}</span>
-            </div>
-          )}
-          <p className="jar-caption">
-            Day {today}. Shared on day {s.day}, {ago(s.createdAt)}{today > s.day ? ', and growing on its own since: nobody mists or airs it' : ''}.
-            {' '}Lights {cl.lightOn ? 'on' : 'off'}.
-          </p>
-        </div>
-
-        <div className="detail-body">
-          <header className="detail-head">
+      <div className="detail workbench">
+        <div className="detail-body" ref={bodyRef} onPointerDownCapture={claim} onFocusCapture={claim}>
+          <header className="detail-head" data-focus="all">
             <h1>{s.spec.name}</h1>
             <p className="detail-sub">
               by <a href={`#/u/${s.keeper}`}>@{s.keeper}</a>. Health <span className={`score score-${h.tone}`}>{score}</span>
@@ -354,7 +336,7 @@ export function SharedJar({ id }: { id: string }) {
           </div>
           <p className="hint flash" aria-live="polite">{flash ?? ' '}</p>
 
-          <section className="block" aria-labelledby="inside">
+          <section className="block" aria-labelledby="inside" data-focus="layers">
             <h2 id="inside">How it was built</h2>
             <dl className="spec-list">
               <dt>Vessel</dt><dd>{vessel.label}, {s.spec.sizeL} L, {LIDS.find((l) => l.id === s.spec.lid)?.label.toLowerCase()} lid</dd>
@@ -364,7 +346,7 @@ export function SharedJar({ id }: { id: string }) {
             </dl>
           </section>
 
-          <section className="block" aria-labelledby="now">
+          <section className="block" aria-labelledby="now" data-focus="all">
             <h2 id="now">On day {today}</h2>
             <dl className="vitals">
               <div><dt>Soil</dt><dd>{moistureWord(cl.moisture)}</dd></div>
@@ -377,7 +359,7 @@ export function SharedJar({ id }: { id: string }) {
             {(st.pools.mushroomG ?? 0) > 0 && <p className="note">Mushrooms are up on the driftwood.</p>}
           </section>
 
-          <section className="block" aria-labelledby="living">
+          <section className="block" aria-labelledby="living" data-focus="plants">
             <h2 id="living">Living in it</h2>
             <ul className="roster">
               {[...planted].map(([sid, n]) => {
@@ -404,7 +386,7 @@ export function SharedJar({ id }: { id: string }) {
           </section>
 
           {st.events.length > 0 && (
-            <section className="block" aria-labelledby="lately">
+            <section className="block" aria-labelledby="lately" data-focus="all">
               <h2 id="lately">Lately</h2>
               <ul className="journal">
                 {[...st.events].reverse().map((e, i) => (
@@ -430,6 +412,29 @@ export function SharedJar({ id }: { id: string }) {
             )}
           </section>
         </div>
+
+        <aside className="detail-jar workbench-view" aria-label={`${s.spec.name} in 3D`}>
+          <div className="stage-3d" onPointerDownCapture={() => setFocus('all')}>
+            <Jar3D spec={s.spec} state={showing ?? st} autoRotate={!life} title={`${s.spec.name} by @${s.keeper}, day ${today}`} view="iso" focus={focus} />
+            <span className="stage-focus" aria-live="polite">{FOCUS_LABEL[focus]}</span>
+            <span className="stage-score">Health <span className={`score score-${h.tone}`}>{score}</span></span>
+            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
+          </div>
+          {life ? (
+            <TimeLapse moments={life} onShow={show} onClose={() => setLife(null)} />
+          ) : (
+            <div className="preview-bar">
+              <button type="button" className="button" onClick={() => setLife(lifeOf(s, Date.now()))}>
+                <Film size={16} aria-hidden="true" /> Watch its life
+              </button>
+              <span className="hint">{(s.frameCount ?? s.frames?.length ?? 0) > 0 ? `From planting to today, a week at a time.` : `From the day it was shared to today.`}</span>
+            </div>
+          )}
+          <p className="jar-caption">
+            Day {today}. Shared on day {s.day}, {ago(s.createdAt)}{today > s.day ? ', and growing on its own since: nobody mists or airs it' : ''}.
+            {' '}Lights {cl.lightOn ? 'on' : 'off'}.
+          </p>
+        </aside>
       </div>
     </main>
   );

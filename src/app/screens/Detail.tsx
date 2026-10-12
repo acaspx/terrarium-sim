@@ -11,6 +11,7 @@ import { Meter, Segmented, Sparkline } from '../ui/controls.js';
 import { share, sharedFrom, useIdentity } from '../playground.js';
 import { KeeperForm } from '../ui/KeeperForm.js';
 import { TimeLapse } from '../ui/TimeLapse.js';
+import { FOCUS_LABEL, useSectionFocus } from '../ui/useSectionFocus.js';
 import { framesToMoments, type Moment } from '../../playground/living.js';
 
 export function Detail({ id }: { id: string }) {
@@ -22,6 +23,8 @@ export function Detail({ id }: { id: string }) {
   // While the time-lapse is open, the moment it is showing; otherwise the jar as it is now.
   const [showing, setShowing] = useState<TerrariumState | null>(null);
   const show = useCallback((st: TerrariumState | null) => setShowing(st), []);
+  // The section being read decides what the view beside it frames, as in the builder.
+  const { ref: bodyRef, focus, setFocus, claim } = useSectionFocus();
   if (!j) {
     return (
       <main className="detail-page">
@@ -32,22 +35,11 @@ export function Detail({ id }: { id: string }) {
   const s = j.state;
   const h = headline(s);
   return (
-    <main className="detail-page">
+    <main className="detail-page workbench-page">
       <a className="back" href="#/"><ArrowLeft size={16} aria-hidden="true" /> Shelf</a>
-      <div className="detail">
-        <div className="detail-jar">
-          <div className="stage-3d">
-            <Jar3D spec={j.spec} state={showing ?? s} title={`${j.spec.name}, day ${dayOf(showing ?? s)}`} />
-            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
-          </div>
-          <OwnLife j={j} onShow={show} />
-          <p className="jar-caption">
-            Day {dayOf(s)}, {clockOf(s)}. Lights {s.climate.lightOn ? 'on' : 'off'}.
-          </p>
-        </div>
-
-        <div className="detail-body">
-          <header className="detail-head">
+      <div className="detail workbench">
+        <div className="detail-body" ref={bodyRef} onPointerDownCapture={claim} onFocusCapture={claim}>
+          <header className="detail-head" data-focus="all">
             <NameField j={j} />
             <p className="detail-sub">
               {VESSELS.find((v) => v.id === j.spec.vessel)?.label}, {j.spec.sizeL} L. Health{' '}
@@ -64,6 +56,19 @@ export function Detail({ id }: { id: string }) {
           <Journal s={s} />
           <Manage j={j} />
         </div>
+
+        <aside className="detail-jar workbench-view" aria-label={`${j.spec.name} in 3D`}>
+          <div className="stage-3d" onPointerDownCapture={() => setFocus('all')}>
+            <Jar3D spec={j.spec} state={showing ?? s} title={`${j.spec.name}, day ${dayOf(showing ?? s)}`} view="iso" focus={focus} />
+            <span className="stage-focus" aria-live="polite">{FOCUS_LABEL[focus]}</span>
+            <span className="stage-score">Health <span className={`score score-${h.tone}`}>{healthScore(s)}</span></span>
+            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
+          </div>
+          <OwnLife j={j} onShow={show} />
+          <p className="jar-caption">
+            Day {dayOf(s)}, {clockOf(s)}. Lights {s.climate.lightOn ? 'on' : 'off'}.
+          </p>
+        </aside>
       </div>
     </main>
   );
@@ -86,7 +91,7 @@ function Conditions({ s, history: j }: { s: TerrariumState; history: JarRecord }
   const cl = s.climate;
   const last = j.history.slice(-60);
   return (
-    <section className="block" aria-labelledby="cond">
+    <section className="block" aria-labelledby="cond" data-focus="all">
       <h2 id="cond">Conditions</h2>
       <dl className="vitals">
         <div>
@@ -183,7 +188,7 @@ function Attention({ j }: { j: JarRecord }) {
   const list = alerts(j.state);
   if (list.length === 0) return null;
   return (
-    <section className="block" aria-labelledby="att">
+    <section className="block" aria-labelledby="att" data-focus="all">
       <h2 id="att">Needs attention</h2>
       <ul className="alerts">
         {list.map((a) => {
@@ -211,7 +216,7 @@ function Care({ j }: { j: JarRecord }) {
     ?? (GROW_LIGHTS.some((g) => g.ppfd === s.container.light.ppfd) && s.container.light.photoperiodH === 12 ? 'grow-light' : j.spec.placement);
   const airing = s.ventRevert ? Math.max(0, s.ventRevert.hour - s.hour) : 0;
   return (
-    <section className="block" aria-labelledby="care">
+    <section className="block" aria-labelledby="care" data-focus="all">
       <h2 id="care">Care</h2>
       <div className="care-actions">
         <button type="button" className="button" onClick={() => act((st) => care.mist(st, 20))}><Droplets size={16} aria-hidden="true" /> Mist</button>
@@ -254,7 +259,7 @@ function Plants({ j }: { j: JarRecord }) {
   const s = j.state;
   const lost = j.spec.plants.length - s.plants.length;
   return (
-    <section className="block" aria-labelledby="plants">
+    <section className="block" aria-labelledby="plants" data-focus="plants">
       <h2 id="plants">Plants</h2>
       {s.plants.length === 0 ? <p className="empty-note">No plants are alive.</p> : (
         <ul className="roster">
@@ -290,13 +295,13 @@ function Plants({ j }: { j: JarRecord }) {
 function Animals({ j }: { j: JarRecord }) {
   const s = j.state;
   if (s.fauna.length === 0) return (
-    <section className="block" aria-labelledby="animals">
+    <section className="block" aria-labelledby="animals" data-focus="crew">
       <h2 id="animals">Animals</h2>
       <p className="empty-note">No animals. Mold and dead leaves will build up without a clean-up crew.</p>
     </section>
   );
   return (
-    <section className="block" aria-labelledby="animals">
+    <section className="block" aria-labelledby="animals" data-focus="crew">
       <h2 id="animals">Animals</h2>
       <ul className="roster">
         {s.fauna.map((f) => {
@@ -322,7 +327,7 @@ function Animals({ j }: { j: JarRecord }) {
 function Journal({ s }: { s: TerrariumState }) {
   const items = [...s.events].reverse().slice(0, 40);
   return (
-    <section className="block" aria-labelledby="journal">
+    <section className="block" aria-labelledby="journal" data-focus="all">
       <h2 id="journal">Journal</h2>
       {items.length === 0 ? <p className="empty-note">Nothing has happened yet. Give it a few days.</p> : (
         <ol className="journal">

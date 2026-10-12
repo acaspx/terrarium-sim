@@ -29,8 +29,13 @@ export interface Part {
   geometry: THREE.BufferGeometry;
   material: THREE.Material;
   instances?: { matrix: THREE.Matrix4; color: THREE.Color }[];
-  /** This part owns its geometry/material and should dispose them. */
+  /** This part owns its geometry, and should dispose it when the plant is rebuilt. */
   owned: boolean;
+  /**
+   * This part owns its material too. Most materials are shared between plants and kept for
+   * the life of the page; disposing a shared one forces every plant using it to recompile.
+   */
+  ownsMaterial?: boolean;
 }
 
 const DYING = new THREE.Color('#9b8650');
@@ -363,7 +368,7 @@ function cushionMoss(p: PlantInput): Part[] {
     tufts.push({ matrix: alongNormal(new THREE.Vector3(x, y, z), nrm, new THREE.Vector3(0.8 + 0.5 * p.rng(), 0.6 + 0.6 * p.rng(), 0.8 + 0.5 * p.rng()), p.rng() * 6), color: c });
   }
   return [
-    { geometry: mound, material, owned: true },
+    { geometry: mound, material, owned: true, ownsMaterial: true },
     { geometry: tuftGeometry(), material: tuftMat(), instances: tufts, owned: false },
   ];
 }
