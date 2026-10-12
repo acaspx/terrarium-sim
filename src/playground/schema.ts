@@ -12,6 +12,7 @@ import {
   PLANT_IDS, PLANT_SIZES, ROOMS, SPECIES, SUBSTRATES, VESSELS,
   type TerrariumSpec, type TerrariumState,
 } from '../engine/index.js';
+import { isOffensive } from './moderation.js';
 
 export interface Submission {
   id: string;
@@ -19,7 +20,8 @@ export interface Submission {
   state: TerrariumState;
   day: number;
   score: number;
-  author: string;
+  /** The username of the keeper who shared it. */
+  keeper: string;
   note: string;
   createdAt: number;
   likes: number;
@@ -28,11 +30,10 @@ export interface Submission {
 export interface SubmissionInput {
   spec: unknown;
   state: unknown;
-  author?: unknown;
   note?: unknown;
 }
 
-export const LIMITS = { name: 40, author: 32, note: 200, plants: 8, maxDays: 365 * 5, events: 12 } as const;
+export const LIMITS = { name: 40, note: 200, plants: 8, maxDays: 365 * 5, events: 12 } as const;
 
 export class InvalidSubmission extends Error {}
 
@@ -170,15 +171,18 @@ export function conformState(spec: TerrariumSpec, input: unknown): TerrariumStat
 }
 
 /** Check and normalise a submission. Throws InvalidSubmission with a message meant for people. */
-export function prepareSubmission(input: SubmissionInput, id: string, now: number): Submission {
+export function prepareSubmission(input: SubmissionInput, id: string, now: number, keeper: string): Submission {
   const spec = validateSpec(input.spec);
   const state = conformState(spec, input.state);
+  const note = cleanText(input.note, LIMITS.note);
+  if (isOffensive(spec.name)) fail('Please give the terrarium a different name.');
+  if (isOffensive(note)) fail('Please reword the note.');
   return {
     id, spec, state,
     day: Math.floor(state.hour / 24),
     score: healthScore(state),
-    author: cleanText(input.author, LIMITS.author) || 'Anonymous keeper',
-    note: cleanText(input.note, LIMITS.note),
+    keeper,
+    note,
     createdAt: now,
     likes: 0,
   };

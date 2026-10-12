@@ -437,3 +437,17 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .chosen { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 6px; }
 .chosen li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; }
 .chosen li > span:first-child { min-width: 130px; font-weight: 600; }
+
+/* ------------------------------------------------------------------ keepers */
+.keeper-form { display: grid; gap: 6px; max-width: 520px; }
+.keeper-form .field { margin-top: 10px; justify-items: stretch; }
+.code-input, .recovery-code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; letter-spacing: 0.04em; }
+.recovery-code {
+  margin: 6px 0; padding: 12px 14px; border-radius: 8px; background: var(--bg); border: 1px dashed var(--moss);
+  font-size: 17px; font-weight: 600; word-break: break-all; user-select: all;
+}
+.saved-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
+.keeper-page { max-width: 720px; }
+.keeper-page h1 { margin-bottom: 6px; }
+.keeper-page .keeper-form { margin-top: 18px; }
+.nav-keeper { margin-left: 8px; }

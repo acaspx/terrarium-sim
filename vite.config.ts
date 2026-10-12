@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import type { IncomingMessage } from 'node:http';
 
-/** Serves /api/terrariums from the dev server with the same handler Vercel runs. */
+/** Serves /api/terrariums and /api/keepers from the dev server with the same handler Vercel runs. */
 function playgroundApi(env: Record<string, string>): Plugin {
   let store: Promise<unknown> | null = null;
   const body = (req: IncomingMessage) =>
@@ -18,7 +18,7 @@ function playgroundApi(env: Record<string, string>): Plugin {
     name: 'playground-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/terrariums')) return next();
+        if (!req.url?.startsWith('/api/terrariums') && !req.url?.startsWith('/api/keepers')) return next();
         try {
           const mod = await server.ssrLoadModule('/src/playground/dev.ts');
           store ??= mod.devStore(env).catch((e: unknown) => {
