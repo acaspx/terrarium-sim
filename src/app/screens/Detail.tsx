@@ -8,7 +8,8 @@ import { Jar3D } from '../jar/Jar3D.js';
 import { clockOf, dayOf, glassWord, headline, moistureWord, pHWord, plantStatus, soilAirWord, vpdWord } from '../format.js';
 import { care, store, useStore, type JarRecord } from '../store.js';
 import { Meter, Segmented, Sparkline } from '../ui/controls.js';
-import { share, sharedFrom } from '../playground.js';
+import { share, sharedFrom, useIdentity } from '../playground.js';
+import { KeeperForm } from '../ui/KeeperForm.js';
 
 export function Detail({ id }: { id: string }) {
   useStore();
@@ -350,14 +351,11 @@ function Manage({ j }: { j: JarRecord }) {
 }
 
 function ShareBox({ j }: { j: JarRecord }) {
+  const me = useIdentity();
   const [open, setOpen] = useState(false);
-  const [author, setAuthor] = useState(() => {
-    try {
-      return localStorage.getItem('terrarium-sim:author') ?? '';
-    } catch {
-      return '';
-    }
-  });
+  // Signed out when the box opened: show the username step until it is finished
+  // (including saving the recovery code), even though claiming signs you in at once.
+  const [joining, setJoining] = useState(false);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -368,13 +366,8 @@ function ShareBox({ j }: { j: JarRecord }) {
     setBusy(true);
     setError(null);
     try {
-      try {
-        localStorage.setItem('terrarium-sim:author', author.trim());
-      } catch {
-        /* not essential */
-      }
-      const item = await share(j, author, note);
-      location.hash = `#/playground/${item.id}`;
+      const item = await share(j, note);
+      location.hash = `#/community/${item.id}`;
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -384,26 +377,35 @@ function ShareBox({ j }: { j: JarRecord }) {
   if (!open) {
     return (
       <div className="share-row">
-        <button type="button" className="button secondary" onClick={() => setOpen(true)} disabled={j.state.plants.length === 0}>
-          <Share2 size={16} aria-hidden="true" /> Share to playground
+        <button type="button" className="button secondary" onClick={() => { setOpen(true); setJoining(!me); }} disabled={j.state.plants.length === 0}>
+          <Share2 size={16} aria-hidden="true" /> Share to community shelf
         </button>
         {previous.length > 0 && (
-          <a className="hint" href={`#/playground/${previous[previous.length - 1]}`}>
+          <a className="hint" href={`#/community/${previous[previous.length - 1]}`}>
             {previous.length === 1 ? 'Shared once. See it' : `Shared ${previous.length} times. See the latest`}
           </a>
         )}
       </div>
     );
   }
+  // Sharing is done as a keeper, so pick a username (or sign in) first.
+  if (!me || joining) {
+    return (
+      <div className="share-form">
+        <KeeperForm intro="To share, pick a username. It shows on everything you share, and gives you a shelf of your own."
+          onDone={() => setJoining(false)} />
+        <div className="share-row">
+          <button type="button" className="button quiet" onClick={() => setOpen(false)}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <form className="share-form" onSubmit={submit}>
       <p className="hint">
-        Everyone visiting the playground will see {j.spec.name} as it is today, day {dayOf(j.state)}. Your jar stays on your shelf and keeps growing.
+        Everyone visiting the community shelf will see {j.spec.name} as it is today, day {dayOf(j.state)}, shared by{' '}
+        <a href={`#/u/${me.name}`}>@{me.name}</a>. Your jar stays here and keeps growing.
       </p>
-      <label className="field">
-        <span className="field-label">Your name <span className="unit">optional</span></span>
-        <input className="small-input" value={author} maxLength={32} onChange={(e) => setAuthor(e.target.value)} placeholder="Anonymous keeper" autoComplete="nickname" />
-      </label>
       <label className="field">
         <span className="field-label">A note <span className="unit">optional</span></span>
         <textarea className="small-input" value={note} maxLength={200} rows={2} onChange={(e) => setNote(e.target.value)} placeholder="What you would tell someone planting one like it" />

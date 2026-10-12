@@ -69,16 +69,19 @@ only been tested in headless desktop Chrome.
 
 ## 5. Before strangers can post (you decide)
 
-What is in place: names and notes are length-limited and stripped of control
-characters; 6 shares per hour per IP; one like
-per visitor; anything reported by 3 people is hidden; only the sharing browser
-can delete.
+What is in place: sharing needs a username; usernames, jar names and notes pass
+a word filter (`src/playground/moderation.ts`, extend its lists as needed) and are
+length-limited; 5 new usernames per hour per IP; 6 shares per hour per keeper;
+one like per visitor; anything reported by 3 people is hidden; only a jar's keeper
+can remove it.
 
-- [ ] Decide whether you want a word filter on names and notes before launch.
-      Recommended for a public gallery; it is a small change.
-- [ ] Know how to remove something by hand: in the Upstash console, delete the
-      ID from the `tr:recent` and `tr:liked` sorted sets (the ID is the last part
-      of the playground URL).
+- [ ] Know how to remove a jar by hand: in the Upstash console, remove its ID from
+      the `tr:recent`, `tr:liked` and `tr:by:<username>` sorted sets (the ID is the
+      last part of the jar's URL).
+- [ ] Know how to retire a username: delete `tr:keeper:<username>`. Its jars stay
+      until removed as above; the name becomes free to claim again.
+- [ ] Lost recovery codes cannot be reset. If someone proves a name is theirs another
+      way, delete `tr:keeper:<username>` and let them claim it again.
 
 ## 6. Merge and check production
 

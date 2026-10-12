@@ -9,6 +9,7 @@ import {
 } from '../../engine/index.js';
 import { condensationMaterial, rimMaterial, WIPES } from './condensation.js';
 import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, type Motion } from './rig.js';
+import { CameraRig, type Focus, type View } from './camera.js';
 import { Critters } from './Critters.js';
 import { q, toUv, useLayout, woodPath, type Layout } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
@@ -29,6 +30,10 @@ export interface Terrarium3DProps {
   label?: string;
   /** When given, plants can be dragged across the soil; called with the plant id and its new u, v. */
   onArrange?: (plantId: string, at: [number, number]) => void;
+  /** Straight-on portrait (default) or a raised, near-isometric corner view. */
+  view?: View;
+  /** Part of the jar to frame (iso view): the whole jar, its layers, the plants, the crew, or the room and its light. */
+  focus?: Focus;
 }
 
 /**
@@ -38,7 +43,7 @@ export interface Terrarium3DProps {
  * and brown with health, the crew moves, mold spreads, and the lights follow
  * the photoperiod.
  */
-export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange }: Terrarium3DProps) {
+export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, view = 'front', focus = 'all' }: Terrarium3DProps) {
   const bg = useCssColor('--bg');
   // One per jar view, kept across re-renders: how the jar is being handled.
   const motion = useMemo(newMotion, []);
@@ -46,7 +51,7 @@ export default function Terrarium3D({ spec, state, lively = true, autoRotate = f
     <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name}>
       <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
         <color attach="background" args={[bg]} />
-        <Scene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} />
+        <Scene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} />
       </Canvas>
     </div>
   );
@@ -66,9 +71,9 @@ function useCssColor(name: string) {
 
 // ------------------------------------------------------------------ scene
 
-function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate }: {
+function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus }: {
   spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange'];
-  motion: Motion; autoRotate: boolean;
+  motion: Motion; autoRotate: boolean; view: View; focus: Focus;
 }) {
   const L = useLayout(spec);
   const cl = state.climate;
@@ -84,10 +89,10 @@ function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate }: {
 
   return (
     <>
-      <CameraRig shape={L.shape} baseY={L.baseY} extraTop={spec.placement === 'grow-light' ? 0.45 : 0} />
+      <CameraRig L={L} focus={focus} view={view} extraTop={spec.placement === 'grow-light' ? 0.45 : 0} />
       <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} />
       <Room placement={spec.placement} lightOn={cl.lightOn} wall={wall} top={L.shape.top} baseY={L.baseY} />
-      <Shelf y={L.baseY} />
+      <Shelf y={L.baseY} deep={view === 'iso'} />
       <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={512} frames={1} color="#1d1a14" />
 
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
@@ -102,22 +107,6 @@ function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate }: {
       </JarRig>
     </>
   );
-}
-
-function CameraRig({ shape, baseY, extraTop }: { shape: Shape; baseY: number; extraTop: number }) {
-  const { camera, size } = useThree();
-  useLayoutEffect(() => {
-    const cam = camera as THREE.PerspectiveCamera;
-    const h = shape.top - baseY + 0.35 + extraTop;
-    const w = shape.kind === 'square' ? shape.hx * 2 + 0.6 : Math.max(...shape.profile.map(([r]) => r)) * 2 + 0.3;
-    const vfov = (cam.fov * Math.PI) / 180;
-    const aspect = size.width / Math.max(1, size.height);
-    const d = Math.max(h / (2 * Math.tan(vfov / 2)), w / (2 * Math.tan(vfov / 2) * aspect)) * 1.05;
-    const ty = baseY + h * 0.46;
-    cam.position.set(0, ty + d * 0.2, d);
-    cam.lookAt(0, ty, 0);
-  }, [camera, size.width, size.height, shape, baseY, extraTop]);
-  return null;
 }
 
 // ------------------------------------------------------------------ light
@@ -160,7 +149,8 @@ function Lights({ lightOn, ppfd, placement }: { lightOn: boolean; ppfd: number; 
   );
 }
 
-function Shelf({ y }: { y: number }) {
+/** The surface the jar stands on. Seen from a raised corner it needs more depth to read as a tabletop. */
+function Shelf({ y, deep }: { y: number; deep: boolean }) {
   const mat = useMemo(() => {
     const map = shelfTexture().clone();
     map.repeat.set(1.4, 1);
@@ -168,8 +158,8 @@ function Shelf({ y }: { y: number }) {
     return new THREE.MeshStandardMaterial({ map, roughness: 0.62, metalness: 0 });
   }, []);
   return (
-    <mesh position={[0, y - 0.07, 0.4]} receiveShadow material={mat}>
-      <boxGeometry args={[7, 0.14, 3.2]} />
+    <mesh position={[0, y - 0.07, deep ? 0.6 : 0.4]} receiveShadow material={mat}>
+      <boxGeometry args={[deep ? 8 : 7, 0.14, deep ? 5 : 3.2]} />
     </mesh>
   );
 }

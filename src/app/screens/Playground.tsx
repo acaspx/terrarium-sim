@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, Flag, Heart, Link2, Sprout, Trash2 } from 'lucide-react';
 import {
   DRAINAGE, faunaSpecies, LIDS, PLACEMENTS, plantSpecies, SUBSTRATES, VESSELS,
@@ -6,8 +6,12 @@ import {
 import { Jar } from '../jar/Jar.js';
 import { Jar3D } from '../jar/Jar3D.js';
 import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
-import { getShared, hasLiked, isMine, like, listShared, plantCopy, report, unshare, type Submission } from '../playground.js';
+import {
+  getKeeper, getShared, hasLiked, like, listByKeeper, listShared, plantCopy, report, signOut, unshare, useIdentity,
+  type KeeperProfile, type Submission,
+} from '../playground.js';
 import { Segmented } from '../ui/controls.js';
+import { KeeperForm } from '../ui/KeeperForm.js';
 
 type Sort = 'recent' | 'liked';
 
@@ -20,31 +24,40 @@ const ago = (ms: number) => {
   return d < 60 ? plural(d, 'day') + ' ago' : new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
 };
 
-// ------------------------------------------------------------------ gallery
+// ------------------------------------------------------------------ shelves
 
-export function Playground() {
-  const [sort, setSort] = useState<Sort>(() => (new URLSearchParams(location.hash.split('?')[1] ?? '').get('sort') === 'liked' ? 'liked' : 'recent'));
+type Page = { items: Submission[]; next: number | null };
+
+/** A paged shelf of shared jars, used for the community shelf and for each keeper's shelf. */
+function SharedGrid({ load, empty, label, showKeeper = true }: {
+  load: (cursor: number) => Promise<Page>; empty: ReactNode; label: string; showKeeper?: boolean;
+}) {
   const [items, setItems] = useState<Submission[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
-  const load = (s: Sort) => {
+  useEffect(() => {
+    let live = true;
     setItems(null);
     setError(null);
-    listShared(s)
+    load(0)
       .then((r) => {
+        if (!live) return;
         setItems(r.items);
         setNext(r.next);
       })
-      .catch((e: Error) => setError(e.message));
-  };
-  useEffect(() => load(sort), [sort]);
+      .catch((e: Error) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [load, attempt]);
 
   const more = () => {
     if (next === null) return;
     setLoadingMore(true);
-    listShared(sort, next)
+    load(next)
       .then((r) => {
         setItems((cur) => [...(cur ?? []), ...r.items]);
         setNext(r.next);
@@ -53,50 +66,149 @@ export function Playground() {
       .finally(() => setLoadingMore(false));
   };
 
-  return (
-    <main className="shelf-page">
-      <div className="shelf-intro">
-        <h1>Playground</h1>
-        <p className="lede">Terrariums other keepers have planted and shared. Look inside any of them, or plant a copy of your own.</p>
-        <Segmented<Sort> label="Sort" size="sm" value={sort} onChange={setSort}
-          options={[{ id: 'recent', label: 'Newest' }, { id: 'liked', label: 'Most liked' }]} />
+  if (error) {
+    return (
+      <div className="notice" role="alert">
+        <p>{error}</p>
+        <button type="button" className="button" onClick={() => setAttempt((a) => a + 1)}>Try again</button>
       </div>
-
-      {error && (
-        <div className="notice" role="alert">
-          <p>{error}</p>
-          <button type="button" className="button" onClick={() => load(sort)}>Try again</button>
-        </div>
-      )}
-      {!error && items === null && <p className="empty-note" aria-live="polite">Loading the playground…</p>}
-      {items && items.length === 0 && (
-        <p className="empty-note">Nothing has been shared yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to playground</strong>.</p>
-      )}
-      {items && items.length > 0 && (
-        <ul className="shelf" aria-label="Shared terrariums">
-          {items.map((s) => (
-            <li key={s.id}>
-              <a className="shelf-slot" href={`#/playground/${s.id}`}>
-                <span className="jar-stage">
-                  <Jar spec={s.spec} state={s.state} lively title={`${s.spec.name} by ${s.author}`} />
+    );
+  }
+  if (items === null) return <p className="empty-note" aria-live="polite">Loading the shelf…</p>;
+  if (items.length === 0) return <p className="empty-note">{empty}</p>;
+  return (
+    <>
+      <ul className="shelf" aria-label={label}>
+        {items.map((s) => (
+          <li key={s.id}>
+            <a className="shelf-slot" href={`#/community/${s.id}`}>
+              <span className="jar-stage">
+                <Jar spec={s.spec} state={s.state} lively title={`${s.spec.name} by @${s.keeper}`} />
+              </span>
+              <span className="tag">
+                <span className="tag-top">
+                  <span className="tag-name">{s.spec.name}</span>
+                  <span className={`score score-${headline(s.state).tone}`}>{s.score}</span>
                 </span>
-                <span className="tag">
-                  <span className="tag-top">
-                    <span className="tag-name">{s.spec.name}</span>
-                    <span className={`score score-${headline(s.state).tone}`}>{s.score}</span>
-                  </span>
-                  <span className="tag-line">by {s.author}, day {s.day}</span>
-                  <span className="tag-line likes"><Heart size={12} aria-hidden="true" /> {s.likes}<span className="visually-hidden"> likes</span></span>
-                </span>
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-      {next !== null && items && (
+                <span className="tag-line">{showKeeper ? `@${s.keeper}, ` : ''}day {s.day}</span>
+                <span className="tag-line likes"><Heart size={12} aria-hidden="true" /> {s.likes}<span className="visually-hidden"> likes</span></span>
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+      {next !== null && (
         <div className="more">
           <button type="button" className="button" onClick={more} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Show more'}</button>
         </div>
+      )}
+    </>
+  );
+}
+
+/** The community shelf: every keeper's shared terrariums, newest or most liked. */
+export function Playground() {
+  const me = useIdentity();
+  const [sort, setSort] = useState<Sort>(() => (new URLSearchParams(location.hash.split('?')[1] ?? '').get('sort') === 'liked' ? 'liked' : 'recent'));
+  const load = useCallback((cursor: number) => listShared(sort, cursor), [sort]);
+  return (
+    <main className="shelf-page">
+      <div className="shelf-intro">
+        <h1>Community shelf</h1>
+        <p className="lede">
+          Terrariums keepers are proud of. Look inside any of them, or plant a copy of your own.{' '}
+          {me ? <a href={`#/u/${me.name}`}>Your shelf</a> : <a href="#/keeper">Pick a username to share yours</a>}.
+        </p>
+        <Segmented<Sort> label="Sort" size="sm" value={sort} onChange={setSort}
+          options={[{ id: 'recent', label: 'Newest' }, { id: 'liked', label: 'Most liked' }]} />
+      </div>
+      <SharedGrid load={load} label="Shared terrariums"
+        empty={<>Nothing has been shared yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>} />
+    </main>
+  );
+}
+
+/** One keeper's shelf, at #/u/name. */
+export function KeeperShelf({ name }: { name: string }) {
+  const me = useIdentity();
+  const [profile, setProfile] = useState<KeeperProfile | null>(null);
+  const [missing, setMissing] = useState<string | null>(null);
+  useEffect(() => {
+    getKeeper(name).then(setProfile).catch((e: Error) => setMissing(e.message));
+  }, [name]);
+  const load = useCallback((cursor: number) => listByKeeper(name, cursor), [name]);
+  const mine = me?.name === name;
+  if (missing) {
+    return (
+      <main className="shelf-page">
+        <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
+        <p className="empty-note">{missing}</p>
+      </main>
+    );
+  }
+  return (
+    <main className="shelf-page">
+      <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
+      <div className="shelf-intro">
+        <h1>@{name}</h1>
+        <p className="lede">
+          {profile ? <>Keeper since {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. {plural(profile.count, 'terrarium')} shared.</> : '\u00a0'}
+          {mine && <> This is your shelf. <a href="#/keeper">Your account</a></>}
+        </p>
+      </div>
+      <SharedGrid load={load} label={`Terrariums shared by @${name}`} showKeeper={false}
+        empty={mine
+          ? <>Nothing here yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>
+          : <>@{name} has not shared anything yet.</>} />
+    </main>
+  );
+}
+
+/** #/keeper: pick a username, sign in elsewhere, or see your recovery code. */
+export function KeeperPage() {
+  const me = useIdentity();
+  const [reveal, setReveal] = useState(false);
+  const [confirmOut, setConfirmOut] = useState(false);
+  // Stay on the form until a new keeper has saved their recovery code.
+  const [joining, setJoining] = useState(!me);
+  return (
+    <main className="detail-page keeper-page">
+      <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
+      {me && !joining ? (
+        <>
+          <h1>@{me.name}</h1>
+          <p className="detail-sub">Signed in on this browser.</p>
+          <div className="share-row">
+            <a className="button primary" href={`#/u/${me.name}`}>Your shelf</a>
+            <button type="button" className="button" onClick={() => setReveal((r) => !r)}>{reveal ? 'Hide recovery code' : 'Show recovery code'}</button>
+          </div>
+          {reveal && (
+            <div className="keeper-form">
+              <p className="recovery-code">{me.key}</p>
+              <p className="hint">Use it with your username to sign in on another phone or browser. Anyone who has it can share and remove terrariums as you.</p>
+            </div>
+          )}
+          <section className="block manage">
+            {confirmOut ? (
+              <span className="confirm">
+                You will need your recovery code to sign back in.
+                <button type="button" className="button danger" onClick={() => { signOut(); setConfirmOut(false); setJoining(true); }}>Sign out</button>
+                <button type="button" className="button quiet" onClick={() => setConfirmOut(false)}>Stay signed in</button>
+              </span>
+            ) : (
+              <button type="button" className="button quiet" onClick={() => setConfirmOut(true)}>Sign out</button>
+            )}
+          </section>
+        </>
+      ) : (
+        <>
+          <h1>Join the community shelf</h1>
+          <p className="detail-sub">
+            Pick a username to share terrariums you are proud of. No email or password: you get a recovery code instead. Liking and
+            browsing need no account.
+          </p>
+          <KeeperForm onDone={(m) => (location.hash = `#/u/${m.name}`)} />
+        </>
       )}
     </main>
   );
@@ -105,6 +217,7 @@ export function Playground() {
 // ------------------------------------------------------------------ one shared jar
 
 export function SharedJar({ id }: { id: string }) {
+  const me = useIdentity();
   const [s, setS] = useState<Submission | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liked, setLiked] = useState(() => hasLiked(id));
@@ -124,7 +237,7 @@ export function SharedJar({ id }: { id: string }) {
   if (error) {
     return (
       <main className="detail-page">
-        <a className="back" href="#/playground"><ArrowLeft size={16} aria-hidden="true" /> Playground</a>
+        <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
         <p className="empty-note">{error}</p>
       </main>
     );
@@ -172,7 +285,7 @@ export function SharedJar({ id }: { id: string }) {
   const onRemove = async () => {
     try {
       await unshare(id);
-      location.hash = '#/playground';
+      location.hash = `#/u/${s.keeper}`;
     } catch (e) {
       say((e as Error).message);
     }
@@ -180,11 +293,11 @@ export function SharedJar({ id }: { id: string }) {
 
   return (
     <main className="detail-page">
-      <a className="back" href="#/playground"><ArrowLeft size={16} aria-hidden="true" /> Playground</a>
+      <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
       <div className="detail">
         <div className="detail-jar">
           <div className="stage-3d">
-            <Jar3D spec={s.spec} state={st} autoRotate title={`${s.spec.name} by ${s.author}, day ${s.day}`} />
+            <Jar3D spec={s.spec} state={st} autoRotate title={`${s.spec.name} by @${s.keeper}, day ${s.day}`} />
             <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
           </div>
           <p className="jar-caption">Day {s.day}, shared {ago(s.createdAt)}. Lights {cl.lightOn ? 'on' : 'off'}.</p>
@@ -194,14 +307,14 @@ export function SharedJar({ id }: { id: string }) {
           <header className="detail-head">
             <h1>{s.spec.name}</h1>
             <p className="detail-sub">
-              by {s.author}. Health <span className={`score score-${h.tone}`}>{s.score}</span>
+              by <a href={`#/u/${s.keeper}`}>@{s.keeper}</a>. Health <span className={`score score-${h.tone}`}>{s.score}</span>
               <span className={`pill tone-${h.tone}`}>{h.text}</span>
             </p>
             {s.note && <blockquote className="keeper-note">{s.note}</blockquote>}
           </header>
 
           <div className="shared-actions">
-            <button type="button" className="button primary" onClick={() => plantCopy(s.spec, s.author)}>
+            <button type="button" className="button primary" onClick={() => plantCopy(s.spec, `@${s.keeper}`)}>
               <Sprout size={18} aria-hidden="true" /> Plant a copy
             </button>
             <button type="button" className={`button like${liked ? ' on' : ''}`} onClick={onLike} aria-pressed={liked} disabled={busy}>
@@ -273,15 +386,15 @@ export function SharedJar({ id }: { id: string }) {
           )}
 
           <section className="block manage">
-            {isMine(id) ? (
+            {me?.name === s.keeper ? (
               confirmRemove ? (
                 <span className="confirm">
-                  Remove it from the playground? Your jar stays on your shelf.
+                  Remove it from the community shelf? Your jar stays on your own shelf.
                   <button type="button" className="button danger" onClick={onRemove}>Remove</button>
                   <button type="button" className="button quiet" onClick={() => setConfirmRemove(false)}>Keep it</button>
                 </span>
               ) : (
-                <button type="button" className="button" onClick={() => setConfirmRemove(true)}><Trash2 size={16} aria-hidden="true" /> Remove from playground</button>
+                <button type="button" className="button" onClick={() => setConfirmRemove(true)}><Trash2 size={16} aria-hidden="true" /> Remove from community shelf</button>
               )
             ) : (
               <button type="button" className="button quiet" onClick={onReport}><Flag size={14} aria-hidden="true" /> Report</button>

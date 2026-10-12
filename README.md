@@ -19,22 +19,22 @@ npm run sim        # the engine from the command line
 
 ## Deploy on Vercel
 
-Jars are saved in the browser's local storage. The playground is one Vercel
-function (`api/terrariums.ts`) backed by Redis.
+Jars are saved in the browser's local storage. The community shelf is two Vercel
+functions (`api/terrariums.ts`, `api/keepers.ts`) backed by Redis.
 
 1. Push this repo to GitHub.
 2. In Vercel, choose **Add New → Project** and import the repo. Vercel reads
    `vercel.json` (build `npm run build`, output `dist`).
-3. For the playground, add a Redis database from the Vercel Marketplace
+3. For the community shelf, add a Redis database from the Vercel Marketplace
    (Upstash). It sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`
    (`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` also work).
-   Without them the playground says it is not connected, and the rest of the app works.
+   Without them the community shelf says it is not connected, and the rest of the app works.
 4. Every push to `main` deploys; every branch gets a preview URL.
 
 See [docs/DEPLOY.md](docs/DEPLOY.md) for the full checklist.
 
 In `npm run dev` the same API runs inside the Vite server. With no Redis
-variables in `.env` it uses an in-memory gallery seeded with a few example jars.
+variables in `.env` it uses an in-memory shelf seeded with a few example keepers and jars.
 
 ## What is in the app
 
@@ -49,7 +49,7 @@ variables in `.env` it uses an in-memory gallery seeded with a few example jars.
 - **Soil and air readings:** pH (from the mix, slowly acidifying), soil air (sours when waterlogged), vapour pressure deficit and daily light integral.
 - **Fungi:** driftwood in a humid jar sprouts a flush of mushrooms every month or two.
 - **3D jar:** the builder and jar pages show the terrarium as a lit 3D scene you can turn: transmissive glass, a condensation shader (mist, beads, then runs that wipe clear trails), soil that darkens and turns glossy when wet, a reservoir that fills, procedural plants that droop with turgor and brown with health, and a crew that hops and wanders. The builder can preview the design at any point in its 90-day forecast. Browsers without WebGL 2 get the drawn jar.
-- **Playground:** share a jar as it is today; anyone can look inside, like it, or plant a copy. Shares keep a private delete token in the sharer's browser. Jars reported by three people are hidden.
+- **Community shelf:** pick a username (no email or password: you get a recovery code to sign in elsewhere) and share jars you are proud of. Each keeper has a shelf of their own at `#/u/name`. Anyone can browse, like and plant a copy without an account. Only a jar's keeper can remove it; jars reported by three people are hidden; usernames, jar names and notes pass a word filter.
 
 ## Layout
 
@@ -68,8 +68,8 @@ src/
     playground.ts  client for the playground API
     screens/       Shelf, Builder, Detail
     store.ts       persistence, clock, daily history, alert transitions
-  playground/      shared by API and app: submission schema and validation, the handler, stores
-api/               Vercel function for the playground
+  playground/      shared by API and app: keepers, submission schema and validation, word filter, the handler, stores
+api/               Vercel functions for the community shelf
 scripts/cli.ts     command-line runner
 test/              behaviour tests: each one is a claim about how a real jar behaves
 docs/
