@@ -10,6 +10,7 @@ import {
 import { condensationMaterial, rimMaterial, WIPES } from './condensation.js';
 import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, type Motion } from './rig.js';
 import { CameraRig, type Focus, type View } from './camera.js';
+import { downgrade, useQuality, type Quality } from './quality.js';
 import { Critters } from './Critters.js';
 import { q, toUv, useLayout, woodPath, type Layout } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
@@ -45,13 +46,17 @@ export interface Terrarium3DProps {
  */
 export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, view = 'front', focus = 'all' }: Terrarium3DProps) {
   const bg = useCssColor('--bg');
+  const quality = useQuality();
   // One per jar view, kept across re-renders: how the jar is being handled.
   const motion = useMemo(newMotion, []);
   return (
-    <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name}>
-      <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
+    <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name} data-quality={quality}>
+      {/* Keyed by quality: stepping down rebuilds the renderer without shadows and at a lower pixel density. */}
+      <Canvas key={quality} shadows={quality === 'high'} dpr={quality === 'high' ? [1, 2] : [1, 1.5]}
+        camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
         <color attach="background" args={[bg]} />
-        <JarScene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} />
+        <JarScene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} quality={quality} />
+        {quality === 'high' && <FrameRateWatch />}
       </Canvas>
     </div>
   );
@@ -76,9 +81,9 @@ function useCssColor(name: string) {
  * bare) the room and shelf around it. Bare scenes are for stills: just the jar and its
  * shadow on a transparent background, to sit on a page.
  */
-export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus, bare = false }: {
+export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus, bare = false, quality = 'high' }: {
   spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange'];
-  motion: Motion; autoRotate: boolean; view: View; focus: Focus; bare?: boolean;
+  motion: Motion; autoRotate: boolean; view: View; focus: Focus; bare?: boolean; quality?: Quality;
 }) {
   const L = useLayout(spec);
   const cl = state.climate;
@@ -95,10 +100,10 @@ export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRot
   return (
     <>
       <CameraRig L={L} focus={focus} view={view} extraTop={spec.placement === 'grow-light' ? 0.45 : 0} />
-      <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} />
+      <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} quality={quality} />
       {!bare && <Room placement={spec.placement} lightOn={cl.lightOn} wall={wall} top={L.shape.top} baseY={L.baseY} />}
       {!bare && <Shelf y={L.baseY} deep={view === 'iso'} />}
-      <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={512} frames={1} color="#1d1a14" />
+      <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={quality === 'high' ? 512 : 256} frames={1} color="#1d1a14" />
 
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
         <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
@@ -107,8 +112,8 @@ export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRot
         <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} />
         <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
         <Mold L={L} amount={q(mold, 0.05)} />
-        <Critters L={L} state={state} lively={lively} />
-        <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} />
+        <Critters L={L} state={state} lively={lively} quality={quality} />
+        <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} quality={quality} />
       </JarRig>
     </>
   );
@@ -116,7 +121,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRot
 
 // ------------------------------------------------------------------ light
 
-function Lights({ lightOn, ppfd, placement }: { lightOn: boolean; ppfd: number; placement: TerrariumSpec['placement'] }) {
+function Lights({ lightOn, ppfd, placement, quality }: { lightOn: boolean; ppfd: number; placement: TerrariumSpec['placement']; quality: Quality }) {
   const key = useRef<THREE.DirectionalLight>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
   const scene = useThree((s) => s.scene);
@@ -144,7 +149,7 @@ function Lights({ lightOn, ppfd, placement }: { lightOn: boolean; ppfd: number; 
         shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} shadow-normalBias={0.02}
         shadow-camera-left={-2} shadow-camera-right={2} shadow-camera-top={2.5} shadow-camera-bottom={-1} shadow-camera-near={0.5} shadow-camera-far={14}
       />
-      <Environment resolution={256} frames={1}>
+      <Environment resolution={quality === 'high' ? 256 : 128} frames={1}>
         <Lightformer form="rect" intensity={2.2} position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
         <Lightformer form="rect" intensity={4} position={[-5, 2.2, 1.5]} rotation={[0, Math.PI / 2, 0]} scale={[2.4, 3.6, 1]} />
         <Lightformer form="rect" intensity={0.8} position={[5, 1.5, -1]} rotation={[0, -Math.PI / 2, 0]} scale={[4, 2, 1]} />
@@ -177,15 +182,50 @@ const GLASS_PROPS: THREE.MeshPhysicalMaterialParameters = {
   specularIntensity: 1, envMapIntensity: 1, side: THREE.DoubleSide, depthWrite: false,
 };
 
-function useGlass() {
-  return useMemo(() => new THREE.MeshPhysicalMaterial(GLASS_PROPS), []);
+/**
+ * Light glass skips the transmission pass (a second render of everything behind the glass,
+ * the scene's biggest cost) and is drawn as a thin, transparent, polished shell instead.
+ * It loses the refraction and the blur of fogged glass, and keeps the reflections.
+ */
+const LIGHT_GLASS_PROPS: THREE.MeshPhysicalMaterialParameters = {
+  // Both walls are drawn, so each is kept very faint; the reflections do the work of reading as glass.
+  color: '#f4faf8', transmission: 0, transparent: true, opacity: 0.06, roughness: 0.03, metalness: 0,
+  clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.6, side: THREE.DoubleSide, depthWrite: false,
+};
+
+function useGlass(quality: Quality) {
+  return useMemo(() => new THREE.MeshPhysicalMaterial(quality === 'high' ? GLASS_PROPS : LIGHT_GLASS_PROPS), [quality]);
 }
 
-function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSpec; cond: number; night: boolean; lively: boolean }) {
+/**
+ * Watches the frame rate for as long as the view is open, in windows of about two
+ * seconds. If the typical frame in a window is slower than about 28 a second, the
+ * device is struggling (now, or after it warms up, or as the jar fills in), so every
+ * 3D view steps down to light quality.
+ */
+const WINDOW = 120;
+function FrameRateWatch() {
+  const samples = useRef<number[]>([]);
+  const frame = useRef(0);
+  useFrame((_, dt) => {
+    if (document.visibilityState !== 'visible') return;
+    frame.current += 1;
+    // Skip the first second or so: shaders compiling and textures uploading are not the steady state.
+    if (frame.current < 60) return;
+    samples.current.push(dt);
+    if (samples.current.length < WINDOW) return;
+    const sorted = [...samples.current].sort((a, b) => a - b);
+    samples.current = [];
+    if (sorted[WINDOW / 2]! > 1 / 28) downgrade();
+  });
+  return null;
+}
+
+function Vessel({ L, spec, cond, night, lively, quality }: { L: Layout; spec: TerrariumSpec; cond: number; night: boolean; lively: boolean; quality: Quality }) {
   const { shape } = L;
-  const glass = useGlass();
+  const glass = useGlass(quality);
   const geo = useMemo(() => glassGeometry(shape), [shape]);
-  const film = useMemo(() => condensationMaterial(), []);
+  const film = useMemo(() => condensationMaterial(quality === 'high'), [quality]);
   const rim = useMemo(() => rimMaterial(), []);
   const filmMesh = useRef<THREE.Mesh>(null);
   const nextWipe = useRef(0);
@@ -237,7 +277,8 @@ function Vessel({ L, spec, cond, night, lively }: { L: Layout; spec: TerrariumSp
       <group position={clocheTilt ? [0, 0.05, 0] : [0, 0, 0]} rotation={clocheTilt ? [0, 0, -0.035] : [0, 0, 0]}>
         <mesh geometry={geo} material={materials} renderOrder={1} onClick={wipe} />
         <mesh ref={filmMesh} geometry={geo} material={film} scale={[0.985, 0.995, 0.985]} renderOrder={2} />
-        <mesh geometry={geo} material={rim} scale={1.003} renderOrder={3} raycast={() => null} />
+        {/* The rim light reads as a bright edge over refracting glass, but washes over plain transparent glass like a haze. */}
+        {quality === 'high' && <mesh geometry={geo} material={rim} scale={1.003} renderOrder={3} raycast={() => null} />}
         {shape.kind === 'round' && !shape.openBottom && <Rim shape={shape} glass={glass} />}
         {spec.vessel === 'cloche' && <Knob y={shape.top + 0.05} glass={glass} />}
         {shape.kind === 'square' && <Frame shape={shape} wardian={spec.vessel === 'wardian'} />}

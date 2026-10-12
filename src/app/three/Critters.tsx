@@ -42,13 +42,15 @@ export const LOOKS: Record<string, Look> = {
 };
 const FALLBACK: Look = { scale: [0.015, 0.009, 0.024], color: '#8a8a84', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
 
-export function Critters({ L, state, lively }: { L: Layout; state: TerrariumState; lively: boolean }) {
+/** quality low: about half the animals are drawn (the colony itself is unchanged). */
+export function Critters({ L, state, lively, quality = 'high' }: { L: Layout; state: TerrariumState; lively: boolean; quality?: 'high' | 'low' }) {
   const swarms = useMemo(
     () => state.fauna.map((f) => {
       const look = LOOKS[f.speciesId] ?? FALLBACK;
-      return { id: f.speciesId, look, n: look.count(f.juveniles + f.adults, state.climate.lightOn) };
+      const n = look.count(f.juveniles + f.adults, state.climate.lightOn);
+      return { id: f.speciesId, look, n: quality === 'low' ? Math.ceil(n / 2) : n };
     }),
-    [state.fauna, state.climate.lightOn],
+    [state.fauna, state.climate.lightOn, quality],
   );
   return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} />)}</>;
 }

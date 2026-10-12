@@ -9,11 +9,13 @@ import * as THREE from 'three';
 /** How many wiped spots the glass remembers at once (two per tap: front and back walls). */
 export const WIPES = 8;
 
-export function condensationMaterial() {
+/** detailed: a second, finer layer of beads and running drips. Off in light quality. */
+export function condensationMaterial(detailed = true) {
   return new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
     side: THREE.DoubleSide,
+    defines: detailed ? { DETAILED: '' } : {},
     uniforms: {
       uCond: { value: 0 },
       uTime: { value: 0 },
@@ -103,6 +105,7 @@ export function condensationMaterial() {
         float trail = 0.0;
         float head = 0.0;
         vec2 headN = vec2(0.0);
+        #ifdef DETAILED
         if (c > 0.9) {
           float cols = 16.0;
           float col = floor(uv.x * cols);
@@ -123,9 +126,14 @@ export function condensationMaterial() {
             headN = hd;
           }
         }
+        #endif
 
         vec3 b1 = beads(uv, 22.0, smoothstep(0.25, 1.0, amount) * 0.9, 0.0);
+        #ifdef DETAILED
         vec3 b2 = beads(uv, 52.0, smoothstep(0.06, 0.6, amount) * 0.95, 17.0);
+        #else
+        vec3 b2 = vec3(0.0);
+        #endif
         vec3 b = b1.x > b2.x * 0.9 ? b1 : b2;
         float bead = step(0.0001, b.x) * (1.0 - trail);
         vec2 bn = b.yz;
