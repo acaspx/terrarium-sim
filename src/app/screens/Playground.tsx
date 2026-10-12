@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ArrowLeft, Flag, Heart, Link2, Sprout, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArrowLeft, Film, Flag, Heart, Link2, Sprout, Trash2 } from 'lucide-react';
 import {
   DRAINAGE, faunaSpecies, LIDS, PLACEMENTS, plantSpecies, SUBSTRATES, VESSELS,
 } from '../../engine/index.js';
-import { Jar } from '../jar/Jar.js';
 import { Jar3D } from '../jar/Jar3D.js';
 import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
 import {
@@ -12,6 +11,10 @@ import {
 } from '../playground.js';
 import { Segmented } from '../ui/controls.js';
 import { KeeperForm } from '../ui/KeeperForm.js';
+import { dayOfState, grownNow, JarStill, scoreOf, useGrown } from '../ui/Living.js';
+import { TimeLapse } from '../ui/TimeLapse.js';
+import { lifeOf, type Moment } from '../../playground/living.js';
+import type { TerrariumState } from '../../engine/index.js';
 
 type Sort = 'recent' | 'liked';
 
@@ -79,23 +82,7 @@ function SharedGrid({ load, empty, label, showKeeper = true }: {
   return (
     <>
       <ul className="shelf" aria-label={label}>
-        {items.map((s) => (
-          <li key={s.id}>
-            <a className="shelf-slot" href={`#/community/${s.id}`}>
-              <span className="jar-stage">
-                <Jar spec={s.spec} state={s.state} lively title={`${s.spec.name} by @${s.keeper}`} />
-              </span>
-              <span className="tag">
-                <span className="tag-top">
-                  <span className="tag-name">{s.spec.name}</span>
-                  <span className={`score score-${headline(s.state).tone}`}>{s.score}</span>
-                </span>
-                <span className="tag-line">{showKeeper ? `@${s.keeper}, ` : ''}day {s.day}</span>
-                <span className="tag-line likes"><Heart size={12} aria-hidden="true" /> {s.likes}<span className="visually-hidden"> likes</span></span>
-              </span>
-            </a>
-          </li>
-        ))}
+        {items.map((s) => <li key={s.id}><LivingCard sub={s} showKeeper={showKeeper} /></li>)}
       </ul>
       {next !== null && (
         <div className="more">
@@ -103,6 +90,28 @@ function SharedGrid({ load, empty, label, showKeeper = true }: {
         </div>
       )}
     </>
+  );
+}
+
+/** A shared jar on a shelf: grown to today, drawn as a 3D still once the page is idle. */
+function LivingCard({ sub, showKeeper }: { sub: Submission; showKeeper: boolean }) {
+  const state = useGrown(sub);
+  const day = dayOfState(state);
+  const title = `${sub.spec.name} by @${sub.keeper}, day ${day}`;
+  return (
+    <a className="shelf-slot" href={`#/community/${sub.id}`}>
+      <span className="jar-stage">
+        <JarStill k={`${sub.id}:${day}`} spec={sub.spec} state={state} title={title} />
+      </span>
+      <span className="tag">
+        <span className="tag-top">
+          <span className="tag-name">{sub.spec.name}</span>
+          <span className={`score score-${headline(state).tone}`}>{scoreOf(state)}</span>
+        </span>
+        <span className="tag-line">{showKeeper ? `@${sub.keeper}, ` : ''}day {day}{day > sub.day ? <span className="grown-note"> · growing on its own</span> : null}</span>
+        <span className="tag-line likes"><Heart size={12} aria-hidden="true" /> {sub.likes}<span className="visually-hidden"> likes</span></span>
+      </span>
+    </a>
   );
 }
 
@@ -224,6 +233,11 @@ export function SharedJar({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // The jar as it is today: the shared snapshot, grown on by itself since.
+  const living = useMemo(() => (s ? grownNow(s) : null), [s]);
+  const [life, setLife] = useState<Moment[] | null>(null);
+  const [showing, setShowing] = useState<TerrariumState | null>(null);
+  const show = useCallback((st: TerrariumState | null) => setShowing(st), []);
 
   useEffect(() => {
     getShared(id).then(setS).catch((e: Error) => setError(e.message));
@@ -242,9 +256,11 @@ export function SharedJar({ id }: { id: string }) {
       </main>
     );
   }
-  if (!s) return <main className="detail-page"><p className="empty-note" aria-live="polite">Opening the jar…</p></main>;
+  if (!s || !living) return <main className="detail-page"><p className="empty-note" aria-live="polite">Opening the jar…</p></main>;
 
-  const st = s.state;
+  const st = living;
+  const today = dayOfState(st);
+  const score = scoreOf(st);
   const cl = st.climate;
   const h = headline(st);
   const vessel = VESSELS.find((v) => v.id === s.spec.vessel)!;
@@ -297,17 +313,30 @@ export function SharedJar({ id }: { id: string }) {
       <div className="detail">
         <div className="detail-jar">
           <div className="stage-3d">
-            <Jar3D spec={s.spec} state={st} autoRotate title={`${s.spec.name} by @${s.keeper}, day ${s.day}`} />
+            <Jar3D spec={s.spec} state={showing ?? st} autoRotate={!life} title={`${s.spec.name} by @${s.keeper}, day ${today}`} />
             <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
           </div>
-          <p className="jar-caption">Day {s.day}, shared {ago(s.createdAt)}. Lights {cl.lightOn ? 'on' : 'off'}.</p>
+          {life ? (
+            <TimeLapse moments={life} onShow={show} onClose={() => setLife(null)} />
+          ) : (
+            <div className="preview-bar">
+              <button type="button" className="button" onClick={() => setLife(lifeOf(s, Date.now()))}>
+                <Film size={16} aria-hidden="true" /> Watch its life
+              </button>
+              <span className="hint">{(s.frameCount ?? s.frames?.length ?? 0) > 0 ? `From planting to today, a week at a time.` : `From the day it was shared to today.`}</span>
+            </div>
+          )}
+          <p className="jar-caption">
+            Day {today}. Shared on day {s.day}, {ago(s.createdAt)}{today > s.day ? ', and growing on its own since: nobody mists or airs it' : ''}.
+            {' '}Lights {cl.lightOn ? 'on' : 'off'}.
+          </p>
         </div>
 
         <div className="detail-body">
           <header className="detail-head">
             <h1>{s.spec.name}</h1>
             <p className="detail-sub">
-              by <a href={`#/u/${s.keeper}`}>@{s.keeper}</a>. Health <span className={`score score-${h.tone}`}>{s.score}</span>
+              by <a href={`#/u/${s.keeper}`}>@{s.keeper}</a>. Health <span className={`score score-${h.tone}`}>{score}</span>
               <span className={`pill tone-${h.tone}`}>{h.text}</span>
             </p>
             {s.note && <blockquote className="keeper-note">{s.note}</blockquote>}
@@ -336,7 +365,7 @@ export function SharedJar({ id }: { id: string }) {
           </section>
 
           <section className="block" aria-labelledby="now">
-            <h2 id="now">On day {s.day}</h2>
+            <h2 id="now">On day {today}</h2>
             <dl className="vitals">
               <div><dt>Soil</dt><dd>{moistureWord(cl.moisture)}</dd></div>
               <div><dt>Humidity</dt><dd>{Math.round(cl.rh * 100)}<span className="unit">%</span></dd></div>

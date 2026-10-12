@@ -49,10 +49,10 @@ describe('placement and shade', () => {
 describe('soil', () => {
   it('starts at the pH of the mix and slowly turns more acid as organic matter rots', () => {
     const s = buildTerrarium(recipe('tropical-jar'));
-    expect(s.soil!.pH).toBeCloseTo(5.8, 5);
+    expect(s.soil!.pH).toBeCloseTo(5.3, 5);
     run(s, days(365));
-    expect(s.soil!.pH).toBeLessThan(5.8);
-    expect(s.soil!.pH).toBeGreaterThan(5.0);
+    expect(s.soil!.pH).toBeLessThan(5.3);
+    expect(s.soil!.pH).toBeGreaterThan(4.6);
   });
 
   it('acid peat slows plants that want neutral soil, but suits moss', () => {

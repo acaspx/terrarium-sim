@@ -1,14 +1,20 @@
 /** Dev-server wiring: Redis if configured, otherwise an in-memory community shelf with a few example keepers. */
-import { buildTerrarium, RECIPES, run, type TerrariumSpec } from '../engine/index.js';
+import { buildTerrarium, frameDue, recordFrame, RECIPES, step, toFrame, type Frame, type TerrariumSpec } from '../engine/index.js';
 import { prepareSubmission, type Submission } from './schema.js';
 import { memoryStore, storeFromEnv, type Keeper } from './server.js';
 
 export { handle } from './server.js';
 
+/** A jar lived for some days, recording weekly frames as the app does, then shared some days ago. */
 function example(spec: TerrariumSpec, days: number, keeper: string, note: string, likes: number, i: number): Submission {
   const state = buildTerrarium(spec);
-  run(state, days * 24 + 13);
-  const sub = prepareSubmission({ spec, state, note }, `example${i}`, Date.now() - (i + 1) * 36e5 * 5, keeper);
+  let frames: Frame[] = [];
+  for (let h = 0; h < days * 24 + 13; h++) {
+    step(state);
+    if (frameDue(state)) frames = recordFrame(frames, toFrame(state));
+  }
+  const sharedDaysAgo = 2 + i * 4;
+  const sub = prepareSubmission({ spec, state, note, frames }, `example${i}`, Date.now() - sharedDaysAgo * 864e5, keeper);
   return { ...sub, likes };
 }
 

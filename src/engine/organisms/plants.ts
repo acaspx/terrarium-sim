@@ -7,9 +7,15 @@ import { plantSpecies } from './species.js';
 /** Grams of fresh plant biomass a litre of container can hold before everything is crowded. */
 const CANOPY_G_PER_L = 12;
 
+/**
+ * Photosynthesis against light: nothing below the compensation point, then a saturating
+ * curve that rises steeply and levels off, reaching 95% at `opt` (how light-saturation
+ * points are measured, e.g. Marschall & Proctor 2004). Past `max` the leaves start to burn.
+ */
 export function lightFactor(ppfd: number, sp: PlantSpecies): number {
   if (ppfd <= sp.light.comp) return 0;
-  const f = Math.min(1, (ppfd - sp.light.comp) / (sp.light.opt - sp.light.comp));
+  // 1 - e^-3 = 0.95, so the curve is 95% of the way up at opt.
+  const f = Math.min(1, (1 - Math.exp((-3 * (ppfd - sp.light.comp)) / (sp.light.opt - sp.light.comp))) / 0.95);
   return ppfd > sp.light.max ? f * Math.max(0, 1 - (ppfd - sp.light.max) / sp.light.max) : f;
 }
 
@@ -110,6 +116,9 @@ export function stepPlants(s: TerrariumState): number {
     else if (stress > 0.5) pl.health += 0.02 / 24;
     if (pl.turgor < 0.1) pl.health -= sp.declinePerDay / 24;
     if (cl.ppfd > sp.light.max) pl.health -= (0.1 / 24) * ((cl.ppfd - sp.light.max) / sp.light.max);
+    // Heat past a plant's limit damages tissue directly, and fast: a few hot afternoons a
+    // week in a closed jar on a sunny sill kill most terrarium plants within a couple of weeks.
+    if (cl.airTempC > sp.tempC.max) pl.health -= (0.2 / 24) * ((cl.airTempC - sp.tempC.max) / 5);
     pl.health = clamp(pl.health);
 
     const t = Math.min(

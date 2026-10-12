@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Droplets, Eraser, Leaf, Scissors, Share2, Wind } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { ArrowLeft, Droplets, Eraser, Film, Leaf, Scissors, Share2, Wind } from 'lucide-react';
 import {
   alerts, dli, faunaSpecies, healthScore, LIDS, PLACEMENTS, GROW_LIGHTS, lightFor, plantSpecies, VESSELS,
   type Alert, type LidId, type PlacementId, type TerrariumState,
@@ -10,6 +10,8 @@ import { care, store, useStore, type JarRecord } from '../store.js';
 import { Meter, Segmented, Sparkline } from '../ui/controls.js';
 import { share, sharedFrom, useIdentity } from '../playground.js';
 import { KeeperForm } from '../ui/KeeperForm.js';
+import { TimeLapse } from '../ui/TimeLapse.js';
+import { framesToMoments, type Moment } from '../../playground/living.js';
 
 export function Detail({ id }: { id: string }) {
   useStore();
@@ -17,6 +19,9 @@ export function Detail({ id }: { id: string }) {
   useEffect(() => {
     store.markSeen(id);
   });
+  // While the time-lapse is open, the moment it is showing; otherwise the jar as it is now.
+  const [showing, setShowing] = useState<TerrariumState | null>(null);
+  const show = useCallback((st: TerrariumState | null) => setShowing(st), []);
   if (!j) {
     return (
       <main className="detail-page">
@@ -32,9 +37,10 @@ export function Detail({ id }: { id: string }) {
       <div className="detail">
         <div className="detail-jar">
           <div className="stage-3d">
-            <Jar3D spec={j.spec} state={s} title={`${j.spec.name}, day ${dayOf(s)}`} />
+            <Jar3D spec={j.spec} state={showing ?? s} title={`${j.spec.name}, day ${dayOf(showing ?? s)}`} />
             <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
           </div>
+          <OwnLife j={j} onShow={show} />
           <p className="jar-caption">
             Day {dayOf(s)}, {clockOf(s)}. Lights {s.climate.lightOn ? 'on' : 'off'}.
           </p>
@@ -168,7 +174,7 @@ function fixFor(a: Alert, j: JarRecord): { label: string; run: () => void } | nu
       const p = j.state.plants.find((pl) => a.message.startsWith(plantSpecies(pl.speciesId).commonName));
       return p ? { label: 'Prune by a third', run: act((s) => care.prune(s, p.id, 0.33)) } : null;
     }
-    case 'overheating': return { label: 'Move to an east window', run: act((s) => care.setLight(s, 90, 9)) };
+    case 'overheating': return { label: 'Move to an east window', run: act((s) => care.setLight(s, 90, 9, true)) };
     default: return null;
   }
 }
@@ -235,7 +241,7 @@ function Care({ j }: { j: JarRecord }) {
             onChange={(id) => {
               j.spec.placement = id;
               const l = lightFor(j.spec);
-              act((st) => care.setLight(st, l.ppfd, l.hours));
+              act((st) => care.setLight(st, l.ppfd, l.hours, id.endsWith('-window')));
             }}
           />
         </div>
@@ -416,5 +422,22 @@ function ShareBox({ j }: { j: JarRecord }) {
         <button type="button" className="button quiet" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>
+  );
+}
+
+/** The jar's own time-lapse, from the weekly frames it has recorded. */
+function OwnLife({ j, onShow }: { j: JarRecord; onShow: (s: TerrariumState | null) => void }) {
+  const [life, setLife] = useState<Moment[] | null>(null);
+  const frames = j.frames ?? [];
+  if (life) return <TimeLapse moments={life} onShow={onShow} onClose={() => setLife(null)} />;
+  return (
+    <div className="preview-bar">
+      <button type="button" className="button" disabled={frames.length < 2} onClick={() => setLife(framesToMoments(j.spec, frames, j.state))}>
+        <Film size={16} aria-hidden="true" /> Watch its life
+      </button>
+      <span className="hint">
+        {frames.length < 2 ? 'A picture is saved every week. Come back after a couple of weeks to watch it grow.' : `${frames.length} weeks recorded.`}
+      </span>
+    </div>
   );
 }

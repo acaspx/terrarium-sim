@@ -74,10 +74,10 @@ export const DRAINAGE: (Option<DrainageId> & { fraction: number })[] = [
 ];
 
 export const SUBSTRATES: (Option<SubstrateId> & { props: SubstrateProps; extraDetritus: number; color: string })[] = [
-  { id: 'abg', label: 'ABG mix', detail: 'Bark, tree fern, charcoal and peat. Airy and fast draining: the vivarium standard. Slightly acid, about pH 5.8.', props: { fieldCapacityGPerL: 300, humusGPerL: 120, nutrientMgPerL: 100, drainPerH: 0.6, pH: 5.8 }, extraDetritus: 0, color: '#5b4330' },
+  { id: 'abg', label: 'ABG mix', detail: 'Bark, tree fern, charcoal and peat. Airy and fast draining: the vivarium standard. Acid from its bark and peat, about pH 5.3.', props: { fieldCapacityGPerL: 300, humusGPerL: 120, nutrientMgPerL: 100, drainPerH: 0.6, pH: 5.3 }, extraDetritus: 0, color: '#5b4330' },
   { id: 'bioactive', label: 'Bioactive tropical mix', detail: 'Coir, peat, bark and worm castings. Holds more water, feeds plants and crew. Near neutral, about pH 6.3.', props: { fieldCapacityGPerL: 380, humusGPerL: 170, nutrientMgPerL: 140, drainPerH: 0.45, pH: 6.3 }, extraDetritus: 1, color: '#4a3526' },
   { id: 'peat', label: 'Peat and sphagnum', detail: 'A sponge, and acid (about pH 4.2). Mosses love it; most other plants grow slowly in it, and roots can sour if it stays wet.', props: { fieldCapacityGPerL: 460, humusGPerL: 200, nutrientMgPerL: 80, drainPerH: 0.3, pH: 4.2 }, extraDetritus: 0, color: '#6b4b31' },
-  { id: 'potting-soil', label: 'Bagged potting soil', detail: 'Dense and rich. Compacts, stays soggy, and grows more mold.', props: { fieldCapacityGPerL: 420, humusGPerL: 230, nutrientMgPerL: 240, drainPerH: 0.2, pH: 6.2 }, extraDetritus: 4, color: '#3d2f26' },
+  { id: 'potting-soil', label: 'Bagged potting soil', detail: 'Dense and rich. Compacts, stays soggy, and grows more mold.', props: { fieldCapacityGPerL: 420, humusGPerL: 230, nutrientMgPerL: 240, drainPerH: 0.2, pH: 6 }, extraDetritus: 4, color: '#3d2f26' },
 ];
 
 export const DEPTHS: (Option<DepthId> & { fraction: number })[] = [
@@ -190,7 +190,7 @@ export function specToSetup(spec: TerrariumSpec): Setup {
     drainageL: spec.sizeL * find(DRAINAGE, spec.drainage).fraction,
     // The cloche always leaks a little under the rim.
     ventilation: Math.max(find(LIDS, spec.lid).vent * v.opening, spec.vessel === 'cloche' ? 0.02 : 0),
-    light: { ppfd: light.ppfd, photoperiodH: light.hours },
+    light: { ppfd: light.ppfd, photoperiodH: light.hours, sun: spec.placement.endsWith('-window') },
     room: { tempC: find(ROOMS, spec.room).tempC, swingC: 2, rh: 0.45 },
     substrate: sub.props,
   };

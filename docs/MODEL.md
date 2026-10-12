@@ -18,7 +18,7 @@ Beside the pools, `soil` holds pH and air (0 sour to 1 open), and each plant has
 
 ## Climate and water
 
-- Room temperature swings daily. Light warms the interior (greenhouse effect), with a lag.
+- Room temperature swings daily. Light warms the interior (greenhouse effect), with a lag. Daylight through a window warms it twice as much as a grow light for the same plant light, because about half of sunlight's energy is infrared outside the band plants use (`heatPerPpfdSun`).
 - The glass tracks the room. Sealed air sits at the dew point of the glass, so humidity is `sat(glass) / sat(air)`: near 100% at night, lower when the light warms the interior.
 - Evaporation scales with `(1 - RH)` and substrate wetness. Vapour either escapes (ventilation) or condenses on the glass and runs back down.
 - Water above field capacity drains to the false bottom, which wicks back slowly when the substrate dries.
@@ -28,7 +28,8 @@ Beside the pools, `soil` holds pH and air (0 sour to 1 open), and each plant has
 
 Growth = max rate x **min**(light, water, temperature, humidity) x CO2 x nitrogen x turgor x room left.
 
-- **Light:** zero below the compensation point, saturates at `opt`, scorches above `max`.
+- **Light:** zero below the compensation point, then a saturating curve, `1 - e^(-3x)`, that reaches 95% at `opt` (the way light saturation is measured), so moderate light still drives useful growth. Leaves burn above `max`.
+- **Heat:** above a species' maximum temperature, health falls in proportion to how far above it the jar is. A closed jar on a sunny sill kills most plants within a couple of weeks.
 - **Water:** trapezoid on substrate moisture. Too dry and too wet both go to zero (root rot).
 - **Turgor** (fast) and **health** (slow) are separate. Turgor is what you see day to day; health is accumulated damage. A plant that wilts and is watered in time loses nothing; one left wilted loses health daily.
 - Plants shed litter continuously, and dead plants become detritus.
@@ -87,7 +88,9 @@ Constants live in `src/core/config.ts`; species numbers in `src/organisms/specie
 | `heatPerPpfd`, `evapCoeff`, `runoffPerH` | Estimated. Calibrate with a thermometer/hygrometer in a real jar. |
 | CO2 levels | Order-of-magnitude only. `gasLeakPerH` (0.25 air changes per hour through lid seams) is tuned so a new jar sits in the low thousands of ppm while it decomposes its starting litter, then falls by day as plants draw it down. Calibrate with a CO2 logger. |
 | Mold growth and cap | Tuned so the bloom peaks in weeks 2 to 5, matching keeper reports |
-| All plant parameters | Estimated from qualitative care guidance |
+| Plant light and temperature | Sourced where possible (RESEARCH.md, section 2b); spike moss and maidenhair light are still qualitative |
+| Sunlight's extra heat (`heatPerPpfdSun`) | Physics of the solar spectrum; the exact factor is estimated |
+| Heat damage rate | Estimated |
 | Isopod and gnat reproduction | Estimated |
 | Plant heights, shade reach and depth | Estimated |
 | pH ranges per plant, acidification and buffering rates | Estimated; starting pH of each mix is typical of its ingredients |

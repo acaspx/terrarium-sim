@@ -19,7 +19,8 @@ export function updateClimate(s: TerrariumState): Climate {
   // Room is warmest mid-afternoon, coolest before dawn.
   const roomTempC = c.room.tempC + c.room.swingC * Math.cos(((hourOfDay - 15) / 24) * 2 * Math.PI);
   // Greenhouse heating under glass; an open lid dumps most of it.
-  const target = roomTempC + ppfd * CONFIG.heatPerPpfd * (1 - 0.7 * c.ventilation);
+  const heat = c.light.sun ? CONFIG.heatPerPpfdSun : CONFIG.heatPerPpfd;
+  const target = roomTempC + ppfd * heat * (1 - 0.7 * c.ventilation);
   s.interiorTempC += (target - s.interiorTempC) * CONFIG.thermalLagPerH;
   const airTempC = s.interiorTempC;
   const glassTempC = roomTempC + 0.3 * (airTempC - roomTempC);

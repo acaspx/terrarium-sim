@@ -499,3 +499,17 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   .builder-page .preview-bar .segmented button { white-space: nowrap; flex: none; }
   .builder-page .builder-submit { position: static; background: none; }
 }
+
+/* ------------------------------------------------------------------ living jars */
+.jar-still { display: block; width: 100%; height: auto; aspect-ratio: 300 / 420; object-fit: contain; animation: swatch-in 0.35s ease-out; transition: transform 0.25s ease; }
+.shelf-slot:hover .jar-stage .jar-still { transform: translateY(-4px); }
+.timelapse {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; padding: 10px 12px;
+  border-radius: 12px; background: var(--surface); border: 1px solid var(--rule);
+}
+.timelapse input[type='range'] { flex: 1 1 160px; accent-color: var(--moss); }
+.timelapse-label { font-size: 14px; font-variant-numeric: tabular-nums; min-width: 190px; }
+.timelapse-kind { color: var(--muted); }
+.timelapse-kind.kind-grown { color: var(--dew); }
+.timelapse-kind.kind-shared { color: var(--moss); font-weight: 600; }
+.lifeline { margin-top: 8px; font-size: 13px; color: var(--muted); }
