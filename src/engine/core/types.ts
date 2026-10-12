@@ -106,7 +106,8 @@ export interface Container {
   drainageL: number;
   /** 0 = sealed, 1 = lid fully off. */
   ventilation: number;
-  light: { ppfd: number; photoperiodH: number };
+  /** sun: daylight through a window, which brings its infrared heat with it (a grow light brings little). */
+  light: { ppfd: number; photoperiodH: number; sun?: boolean };
   room: { tempC: number; swingC: number; rh: number };
 }
 

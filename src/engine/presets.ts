@@ -36,7 +36,7 @@ export const PRESETS: Record<string, Setup> = {
   },
   /** Beginner mistake: soaked substrate on a sunny windowsill. */
   'overwatered-windowsill': {
-    container: { ...jar10L, light: { ppfd: 700, photoperiodH: 6 } },
+    container: { ...jar10L, light: { ppfd: 700, photoperiodH: 6, sun: true } },
     initialMoisture: 1.3,
     plants: [
       { speciesId: 'fittonia', biomassG: 8 },

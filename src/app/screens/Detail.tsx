@@ -174,7 +174,7 @@ function fixFor(a: Alert, j: JarRecord): { label: string; run: () => void } | nu
       const p = j.state.plants.find((pl) => a.message.startsWith(plantSpecies(pl.speciesId).commonName));
       return p ? { label: 'Prune by a third', run: act((s) => care.prune(s, p.id, 0.33)) } : null;
     }
-    case 'overheating': return { label: 'Move to an east window', run: act((s) => care.setLight(s, 90, 9)) };
+    case 'overheating': return { label: 'Move to an east window', run: act((s) => care.setLight(s, 90, 9, true)) };
     default: return null;
   }
 }
@@ -241,7 +241,7 @@ function Care({ j }: { j: JarRecord }) {
             onChange={(id) => {
               j.spec.placement = id;
               const l = lightFor(j.spec);
-              act((st) => care.setLight(st, l.ppfd, l.hours));
+              act((st) => care.setLight(st, l.ppfd, l.hours, id.endsWith('-window')));
             }}
           />
         </div>

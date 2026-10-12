@@ -47,7 +47,8 @@ export function removeMold(s: TerrariumState): void {
   log(s, 'care', 'Removed visible mold.');
 }
 
-export function setLight(s: TerrariumState, ppfd: number, photoperiodH = s.container.light.photoperiodH): void {
-  s.container.light = { ppfd, photoperiodH };
+/** sun: daylight from a window, which heats the jar more than a grow light (see CONFIG.heatPerPpfdSun). */
+export function setLight(s: TerrariumState, ppfd: number, photoperiodH = s.container.light.photoperiodH, sun = s.container.light.sun): void {
+  s.container.light = { ppfd, photoperiodH, ...(sun ? { sun } : {}) };
   log(s, 'care', `Light set to ${ppfd} PPFD for ${photoperiodH} h.`);
 }

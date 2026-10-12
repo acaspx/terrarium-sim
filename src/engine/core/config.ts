@@ -4,8 +4,15 @@
  */
 export const CONFIG = {
   lightsOnHour: 8,
-  /** deg C of interior warming per unit PPFD under a closed lid. 150 PPFD ~ +2 C; direct sun (1000+) cooks the jar. */
+  /** deg C of interior warming per unit PPFD under a closed lid, from a grow light. 150 PPFD ~ +2 C. */
   heatPerPpfd: 0.015,
+  /**
+   * The same for daylight. Only about 45% of sunlight's energy is in the band plants use;
+   * the rest is mostly infrared, which still heats the jar. A white LED puts most of its
+   * output into that band. So sun warms a jar about twice as much for the same plant light,
+   * which is why a closed jar on a sunny sill cooks.
+   */
+  heatPerPpfdSun: 0.03,
   /** Interior air/substrate relaxes toward its target temperature at this rate per hour. */
   thermalLagPerH: 0.3,
   /** g water evaporated per m2 of substrate per hour per unit (1 - RH). */
@@ -55,9 +62,9 @@ export const CONFIG = {
     woodDecayPerDay: 0.0004,
     /** Fruiting needs a well-colonised log, saturated air and wet wood. */
     fruitAtShare: 0.5,
-    fruitMinRh: 0.9,
+    fruitMinRh: 0.85,
     fruitMinMoisture: 0.55,
-    flushDays: 7,
+    flushDays: 5,
     restDays: 45,
     mushroomPerGMycelium: 0.3,
   },
