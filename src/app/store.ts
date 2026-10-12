@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
-  alerts, buildTerrarium, care, geometry, healthScore, RECIPES, step,
-  type TerrariumSpec, type TerrariumState,
+  alerts, buildTerrarium, care, frameDue, geometry, healthScore, recordFrame, RECIPES, step, toFrame,
+  type Frame, type TerrariumSpec, type TerrariumState,
 } from '../engine/index.js';
 
 /** How fast simulated time runs. "live" is real time: one simulated hour per real hour. */
@@ -30,6 +30,8 @@ export interface JarRecord {
   alertCodes: string[];
   /** Simulated hour the keeper last looked at this jar; events after it are "new". */
   seenHour: number;
+  /** A picture a week of the jar's life, for its time-lapse. Missing on jars saved before time-lapses. */
+  frames?: Frame[];
 }
 
 interface Persisted {
@@ -76,6 +78,7 @@ function dayPoint(s: TerrariumState): DayPoint {
 function stepJar(j: JarRecord): void {
   const s = j.state;
   step(s);
+  if (frameDue(s)) j.frames = recordFrame(j.frames ?? [], toFrame(s));
   if (s.hour % 24 !== 0) return;
   j.history.push(dayPoint(s));
   if (j.history.length > MAX_HISTORY) j.history.splice(0, j.history.length - MAX_HISTORY);
@@ -95,7 +98,7 @@ function newRecord(spec: TerrariumSpec): JarRecord {
   const state = buildTerrarium(spec);
   return {
     id: uid(), spec: structuredClone(spec), state, history: [dayPoint(state)],
-    createdAt: Date.now(), pending: 0, alertCodes: [], seenHour: 0,
+    createdAt: Date.now(), pending: 0, alertCodes: [], seenHour: 0, frames: [],
   };
 }
 

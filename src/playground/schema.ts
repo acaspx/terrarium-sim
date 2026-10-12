@@ -8,7 +8,7 @@
  * and the state keeps only the fields the engine itself would produce.
  */
 import {
-  buildTerrarium, CREW_COUNTS, CREW_IDS, DEPTHS, DRAINAGE, GROW_LIGHTS, HARDSCAPE, healthScore, LIDS, MOISTURES, PLACEMENTS,
+  buildTerrarium, CREW_COUNTS, expandFrame, MAX_FRAMES, toFrame, type Frame, CREW_IDS, DEPTHS, DRAINAGE, GROW_LIGHTS, HARDSCAPE, healthScore, LIDS, MOISTURES, PLACEMENTS,
   PLANT_IDS, PLANT_SIZES, ROOMS, SPECIES, SUBSTRATES, VESSELS,
   type TerrariumSpec, type TerrariumState,
 } from '../engine/index.js';
@@ -22,6 +22,10 @@ export interface Submission {
   score: number;
   /** The username of the keeper who shared it. */
   keeper: string;
+  /** The jar's recorded life before it was shared, a frame a week (sent with one jar, left out of lists). */
+  frames?: Frame[];
+  /** How many frames there are, for lists that leave the frames themselves out. */
+  frameCount?: number;
   note: string;
   createdAt: number;
   likes: number;
@@ -30,6 +34,7 @@ export interface Submission {
 export interface SubmissionInput {
   spec: unknown;
   state: unknown;
+  frames?: unknown;
   note?: unknown;
 }
 
@@ -170,11 +175,31 @@ export function conformState(spec: TerrariumSpec, input: unknown): TerrariumStat
   return { ...state, plants, fauna, events };
 }
 
+/**
+ * Frames arrive from the browser like the state does, so each is rebuilt the same
+ * way: laid over the design's own jar, run through conformState, and taken again.
+ * Frames that do not fit, or are out of order, are dropped rather than refused.
+ */
+export function conformFrames(spec: TerrariumSpec, input: unknown, beforeHour: number): Frame[] {
+  if (!Array.isArray(input)) return [];
+  const out: Frame[] = [];
+  for (const raw of input.slice(-MAX_FRAMES)) {
+    try {
+      const f = toFrame(conformState(spec, expandFrame(spec, raw as Frame)));
+      if (f.hour < beforeHour && (out.length === 0 || f.hour > out[out.length - 1]!.hour)) out.push(f);
+    } catch {
+      // A malformed frame is simply left out of the time-lapse.
+    }
+  }
+  return out;
+}
+
 /** Check and normalise a submission. Throws InvalidSubmission with a message meant for people. */
 export function prepareSubmission(input: SubmissionInput, id: string, now: number, keeper: string): Submission {
   const spec = validateSpec(input.spec);
   const state = conformState(spec, input.state);
   const note = cleanText(input.note, LIMITS.note);
+  const frames = conformFrames(spec, input.frames, state.hour);
   if (isOffensive(spec.name)) fail('Please give the terrarium a different name.');
   if (isOffensive(note)) fail('Please reword the note.');
   return {
@@ -183,6 +208,8 @@ export function prepareSubmission(input: SubmissionInput, id: string, now: numbe
     score: healthScore(state),
     keeper,
     note,
+    frames,
+    frameCount: frames.length,
     createdAt: now,
     likes: 0,
   };

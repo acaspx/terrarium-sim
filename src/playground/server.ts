@@ -49,7 +49,8 @@ export interface PlaygroundStore {
 }
 
 const PAGE = 24;
-const MAX_BODY = 96 * 1024;
+// Room for a jar and a year of weekly frames.
+const MAX_BODY = 256 * 1024;
 const SUBMITS_PER_HOUR = 6;
 const KEEPERS_PER_HOUR = 5;
 const REPORTS_TO_HIDE = 3;
@@ -312,9 +313,11 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promi
     }
     const offset = Math.max(0, Math.min(10_000, Number(url.searchParams.get('cursor')) || 0));
     const keeper = normaliseName(url.searchParams.get('keeper'));
-    const items = keeper
+    const page = keeper
       ? await store.listByKeeper(keeper, offset, PAGE)
       : await store.list(url.searchParams.get('sort') === 'liked' ? 'liked' : 'recent', offset, PAGE);
+    // Lists leave the time-lapse frames out; opening one jar fetches them.
+    const items = page.map(({ frames, ...s }) => ({ ...s, frameCount: s.frameCount ?? frames?.length ?? 0 }));
     return json({ items, next: items.length === PAGE ? offset + PAGE : null }, 200, { 'cache-control': 'public, max-age=10, stale-while-revalidate=60' });
   }
 

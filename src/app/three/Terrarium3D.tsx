@@ -51,7 +51,7 @@ export default function Terrarium3D({ spec, state, lively = true, autoRotate = f
     <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name}>
       <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
         <color attach="background" args={[bg]} />
-        <Scene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} />
+        <JarScene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} />
       </Canvas>
     </div>
   );
@@ -71,9 +71,14 @@ function useCssColor(name: string) {
 
 // ------------------------------------------------------------------ scene
 
-function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus }: {
+/**
+ * Everything inside the canvas: light, camera, the jar and its contents, and (unless
+ * bare) the room and shelf around it. Bare scenes are for stills: just the jar and its
+ * shadow on a transparent background, to sit on a page.
+ */
+export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus, bare = false }: {
   spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange'];
-  motion: Motion; autoRotate: boolean; view: View; focus: Focus;
+  motion: Motion; autoRotate: boolean; view: View; focus: Focus; bare?: boolean;
 }) {
   const L = useLayout(spec);
   const cl = state.climate;
@@ -91,8 +96,8 @@ function Scene({ spec, state, lively, wall, onArrange, motion, autoRotate, view,
     <>
       <CameraRig L={L} focus={focus} view={view} extraTop={spec.placement === 'grow-light' ? 0.45 : 0} />
       <Lights lightOn={cl.lightOn} ppfd={ppfd} placement={spec.placement} />
-      <Room placement={spec.placement} lightOn={cl.lightOn} wall={wall} top={L.shape.top} baseY={L.baseY} />
-      <Shelf y={L.baseY} deep={view === 'iso'} />
+      {!bare && <Room placement={spec.placement} lightOn={cl.lightOn} wall={wall} top={L.shape.top} baseY={L.baseY} />}
+      {!bare && <Shelf y={L.baseY} deep={view === 'iso'} />}
       <ContactShadows key={spec.vessel} position={[0, L.baseY + 0.002, 0]} scale={5} blur={2.6} far={1.2} opacity={0.45} resolution={512} frames={1} color="#1d1a14" />
 
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>

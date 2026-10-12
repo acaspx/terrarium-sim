@@ -115,7 +115,7 @@ export async function share(j: JarRecord, note: string) {
   const { item } = await request<{ item: Submission }>('terrariums', {
     method: 'POST',
     headers: auth(),
-    body: JSON.stringify({ spec: j.spec, state: { ...j.state, events: j.state.events.slice(-12) }, note }),
+    body: JSON.stringify({ spec: j.spec, state: { ...j.state, events: j.state.events.slice(-12) }, frames: j.frames ?? [], note }),
   });
   const from = readJson<Record<string, string>>(SHARED_KEY, {});
   from[item.id] = j.id;
