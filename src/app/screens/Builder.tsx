@@ -1,4 +1,4 @@
-import { createContext, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useDeferredValue, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, Move, X } from 'lucide-react';
 import {
   BLANK_SPEC, buildTerrarium, checkSpec, run, CREW_COUNTS, CREW_IDS, DEPTHS, DRAINAGE, faunaSpecies, forecast,
@@ -6,7 +6,8 @@ import {
   SIZE_LABELS, SUBSTRATES, VESSELS,
   type HardscapeId, type SpecIssue, type TerrariumSpec, type VesselId,
 } from '../../engine/index.js';
-import { Jar3D, type Jar3DProps } from '../jar/Jar3D.js';
+import { Jar3D } from '../jar/Jar3D.js';
+import { FOCUS_LABEL, useSectionFocus, type Focus } from '../ui/useSectionFocus.js';
 import { store } from '../store.js';
 import { pluralName } from '../format.js';
 import { Segmented, Sparkline } from '../ui/controls.js';
@@ -52,24 +53,7 @@ export function Builder() {
   const fc = useMemo(() => forecast(deferred, 90), [deferred]);
   const [previewDay, setPreviewDay] = useState(0);
   // The step being worked on decides what the camera frames.
-  const [step, setStep] = useState(0);
-  const formRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const root = formRef.current;
-    if (!root || typeof IntersectionObserver === 'undefined') return;
-    // A thin band across the screen: the step crossing it is the one being read. On a phone the
-    // preview is pinned to the top, so the band sits lower, below it.
-    const narrow = matchMedia('(max-width: 860px)').matches;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const hit = entries.filter((e) => e.isIntersecting).sort((x, y) => x.boundingClientRect.top - y.boundingClientRect.top)[0];
-        if (hit) setStep(Number((hit.target as HTMLElement).dataset.step));
-      },
-      { rootMargin: narrow ? '-58% 0px -38% 0px' : '-28% 0px -66% 0px' },
-    );
-    root.querySelectorAll('[data-step]').forEach((el) => obs.observe(el));
-    return () => obs.disconnect();
-  }, []);
+  const { ref: formRef, focus: stepFocus, setFocus } = useSectionFocus();
 
   // The plant or animal last tapped, whose notes show under its row.
   const [focusPlant, setFocusPlant] = useState<string | null>(null);
@@ -82,7 +66,7 @@ export function Builder() {
     if (spec.plants[i]) update({ plants: spec.plants.map((p, j) => (j === i ? { ...p, at } : p)) });
   };
   const placed = spec.plants.some((p) => p.at);
-  const focus: Focus = arranging ? 'plants' : STEP_FOCUS[step] ?? 'all';
+  const focus: Focus = arranging ? 'plants' : stepFocus;
   const issues = useMemo(() => checkSpec(spec), [spec]);
   const issuesFor = (target: string) => issues.filter((i) => i.target === target);
 
@@ -103,12 +87,12 @@ export function Builder() {
   };
 
   return (
-    <ActivateStep.Provider value={setStep}>
-    <main className="builder-page">
+    <ActivateStep.Provider value={(n) => setFocus(STEP_FOCUS[n] ?? 'all')}>
+    <main className="builder-page workbench-page">
       <a className="back" href="#/"><ArrowLeft size={16} aria-hidden="true" /> Shelf</a>
-      <div className="builder">
+      <div className="builder workbench">
         <div className="builder-form" ref={formRef}>
-          <header className="builder-head" data-step={0}>
+          <header className="builder-head" data-focus="all">
             <h1>New terrarium</h1>
             <div className="field">
               <span className="field-label">Start from</span>
@@ -300,7 +284,7 @@ export function Builder() {
             <span className="hint">{spec.plants.length === 0 ? 'Add at least one plant first.' : 'It joins your shelf and starts growing.'}</span>
           </div>
         </div>
-        <aside className="builder-preview" aria-label="Preview">
+        <aside className="builder-preview workbench-view" aria-label="Preview">
           <div className="stage-3d">
             <Jar3D spec={spec} state={shown} title={`Preview of ${spec.name}, day ${arranging ? 0 : previewDay}`}
               onArrange={arranging ? arrange : undefined} view="iso" focus={focus} />
@@ -338,23 +322,15 @@ export function Builder() {
   );
 }
 
-type Focus = NonNullable<Jar3DProps['focus']>;
 /** What the camera frames for each step: 0 is the recipe picker at the top. */
 const STEP_FOCUS: Record<number, Focus> = { 0: 'all', 1: 'all', 2: 'layers', 3: 'plants', 4: 'crew', 5: 'light', 6: 'all', 7: 'all' };
-const FOCUS_LABEL: Record<Focus, string> = {
-  all: 'The whole jar',
-  layers: 'Layers: drainage and substrate',
-  plants: 'Plants, from above',
-  crew: 'Clean-up crew, up close',
-  light: 'Placement and light',
-};
 /** Lets a step tell the builder it is being worked on. */
 const ActivateStep = createContext<(n: number) => void>(() => undefined);
 
 function Step({ n, title, hint, children }: { n: number; title: string; hint?: string; children: ReactNode }) {
   const activate = useContext(ActivateStep);
   return (
-    <section className="step" aria-labelledby={`step-${n}`} data-step={n} onPointerDownCapture={() => activate(n)} onFocusCapture={() => activate(n)}>
+    <section className="step" aria-labelledby={`step-${n}`} data-focus={STEP_FOCUS[n]} onPointerDownCapture={() => activate(n)} onFocusCapture={() => activate(n)}>
       <h2 id={`step-${n}`}><span className="step-n" aria-hidden="true">{n}</span>{title}</h2>
       {hint && <p className="step-hint">{hint}</p>}
       {children}

@@ -1,5 +1,5 @@
-import { useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useEffect, useMemo, useRef } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { PlacementId } from '../../engine/index.js';
 import { fittoniaTexture } from './textures.js';
@@ -41,6 +41,18 @@ export function Room({ placement, lightOn, wall, top, baseY }: { placement: Plac
     // The walls are lit by the room, not just by the jar's own light: a little self-light keeps them from going grey.
     return new THREE.MeshStandardMaterial({ color: c, roughness: 1, side: THREE.BackSide, emissive: c, emissiveIntensity: 0 });
   }, [wall]);
+  // three only compiles what is visible, so show every fixture for one compile pass, then restore.
+  const fixtures = useRef<THREE.Group>(null);
+  const { gl, scene, camera } = useThree();
+  useEffect(() => {
+    const groups = fixtures.current?.children ?? [];
+    const shown = groups.map((g) => g.visible);
+    groups.forEach((g) => (g.visible = true));
+    gl.compile(scene, camera);
+    groups.forEach((g, i) => (g.visible = shown[i]!));
+    // Only once per view: later placement changes reuse what was compiled here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl]);
   useFrame((_, dt) => {
     const target = lightOn ? (dim ? 0.18 : 0.42) : 0.04;
     wallMat.emissiveIntensity += (target - wallMat.emissiveIntensity) * (1 - Math.exp(-dt * 3));
@@ -50,9 +62,13 @@ export function Room({ placement, lightOn, wall, top, baseY }: { placement: Plac
       <mesh position={[0, baseY + 3.5, 0]} material={wallMat}>
         <boxGeometry args={[14, 10, 14]} />
       </mesh>
-      {SKY[placement] && <Window color={SKY[placement]!} lightOn={lightOn} baseY={baseY} />}
-      {placement === 'grow-light' && <GrowLight lightOn={lightOn} y={top + 0.6} />}
-      {placement === 'dim-corner' && <Print baseY={baseY} />}
+      {/* Every fixture is built up front and only shown for its placement, so changing placement
+          never compiles new materials at the moment of the click. */}
+      <group ref={fixtures}>
+        <group visible={!!SKY[placement]}><Window color={SKY[placement] ?? SKY['north-window']!} lightOn={lightOn} baseY={baseY} /></group>
+        <group visible={placement === 'grow-light'}><GrowLight lightOn={lightOn} y={top + 0.6} /></group>
+        <group visible={placement === 'dim-corner'}><Print baseY={baseY} /></group>
+      </group>
     </group>
   );
 }

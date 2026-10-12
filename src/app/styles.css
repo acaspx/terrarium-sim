@@ -462,11 +462,12 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .keeper-page .keeper-form { margin-top: 18px; }
 .nav-keeper { margin-left: 8px; }
 
-/* ------------------------------------------------------------------ builder: options left, a large iso view right */
-.builder-page { max-width: 1520px; }
-.builder-page .builder { grid-template-columns: minmax(340px, 0.82fr) minmax(0, 1.18fr); gap: clamp(24px, 3.5vw, 52px); }
-.builder-page .builder-preview { position: sticky; top: calc(var(--topbar-h, 70px) + 16px); }
-.builder-page .stage-3d {
+/* ------------------------------------------------------------------ workbench: details left, a large iso view right
+   Shared by the builder, your jar's page and a shared jar's page. */
+.workbench-page { max-width: 1520px; }
+.workbench-page .workbench { grid-template-columns: minmax(340px, 0.82fr) minmax(0, 1.18fr); gap: clamp(24px, 3.5vw, 52px); }
+.workbench-page .workbench-view { position: sticky; top: calc(var(--topbar-h, 70px) + 16px); }
+.workbench-page .stage-3d {
   aspect-ratio: auto; height: calc(100vh - var(--topbar-h, 70px) - 96px); min-height: 480px; max-height: 920px; border-radius: 20px;
 }
 .preview-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }
@@ -485,28 +486,28 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 
 @media (max-width: 860px) {
   /* The view stays pinned under the top bar while you scroll the options beneath it. */
-  .builder-page .builder { grid-template-columns: 1fr; }
-  .builder-page .builder-preview {
+  .workbench-page .workbench { grid-template-columns: 1fr; }
+  .workbench-page .workbench-view {
     order: -1; position: sticky; top: var(--topbar-h, 64px); z-index: 5;
     margin: 0 calc(-1 * clamp(16px, 4vw, 40px)); padding: 8px clamp(16px, 4vw, 40px) 10px;
     background: var(--bg); box-shadow: 0 10px 14px -12px rgba(0, 0, 0, 0.35);
   }
-  .builder-page .stage-3d { height: 40vh; min-height: 250px; border-radius: 14px; }
-  .builder-page .preview-bar { margin-top: 8px; }
-  .builder-page .preview-bar .arrange-hint { display: none; }
+  .workbench-page .stage-3d { height: 40vh; min-height: 250px; border-radius: 14px; }
+  .workbench-page .preview-bar { margin-top: 8px; }
+  .workbench-page .preview-bar .arrange-hint { display: none; }
   .stage-focus, .stage-score { top: 8px; font-size: 12px; padding: 4px 9px; }
   .stage-focus { left: 8px; }
   .stage-score { right: 8px; }
 }
 @media (max-width: 860px) {
   /* Keep the pinned preview short so the options beneath have room. */
-  .builder-page .stage-3d { height: 34vh; min-height: 220px; }
-  .builder-page .stage-hint { display: none; }
-  .builder-page .preview-bar { flex-wrap: nowrap; gap: 8px; }
-  .builder-page .preview-bar .button { padding: 6px 10px; font-size: 13px; flex: none; }
-  .builder-page .preview-bar .segmented { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
-  .builder-page .preview-bar .segmented::-webkit-scrollbar { display: none; }
-  .builder-page .preview-bar .segmented button { white-space: nowrap; flex: none; }
+  .workbench-page .stage-3d { height: 34vh; min-height: 220px; }
+  .workbench-page .stage-hint { display: none; }
+  .workbench-page .preview-bar { flex-wrap: nowrap; gap: 8px; }
+  .workbench-page .preview-bar .button { padding: 6px 10px; font-size: 13px; flex: none; }
+  .workbench-page .preview-bar .segmented { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .workbench-page .preview-bar .segmented::-webkit-scrollbar { display: none; }
+  .workbench-page .preview-bar .segmented button { white-space: nowrap; flex: none; }
   .builder-page .builder-submit { position: static; background: none; }
 }
 
@@ -523,3 +524,10 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .timelapse-kind.kind-grown { color: var(--dew); }
 .timelapse-kind.kind-shared { color: var(--moss); font-weight: 600; }
 .lifeline { margin-top: 8px; font-size: 13px; color: var(--muted); }
+/* Room after the last section on jar pages, so the bottom sections can reach the band that sets the view. */
+.workbench-page .detail-body { padding-bottom: 40vh; }
+@media (max-width: 860px) {
+  .workbench-page .detail-body { padding-bottom: 30vh; }
+  /* The pinned panel stays short on phones: the day is in the page itself. */
+  .workbench-page .workbench-view .jar-caption { display: none; }
+}
