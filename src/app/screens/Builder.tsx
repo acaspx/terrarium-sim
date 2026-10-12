@@ -309,7 +309,8 @@ export function Builder() {
               title="See the 90-day forecast">
               Day {fc.days} health <span className={`score score-${scoreTone(fc.finalScore)}`}>{fc.finalScore}</span>
             </button>
-            <span className="stage-hint">{arranging ? 'Drag a plant to move it. Drag elsewhere to spin the jar.' : 'Drag to spin. Tap plants, soil and glass.'}</span>
+            {/* Keyed so a new message shows (and fades) again. */}
+            <span className="stage-hint" key={arranging ? 'arrange' : 'spin'}>{arranging ? 'Drag a plant to move it. Drag elsewhere to spin the jar.' : 'Drag to spin. Tap plants, soil and glass.'}</span>
           </div>
           <div className="preview-bar">
             <button type="button" className={`button${arranging ? ' primary' : ''}`} aria-pressed={arranging}
