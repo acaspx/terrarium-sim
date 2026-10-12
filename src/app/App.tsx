@@ -17,6 +17,14 @@ export function App() {
   const route = useRoute();
   const me = useIdentity();
   useEffect(() => startClock(), []);
+  // Pinned panels sit just below the sticky top bar, whose height changes as it wraps on narrow screens.
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>('.topbar');
+    if (!bar || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--topbar-h', `${bar.offsetHeight}px`));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => window.scrollTo(0, 0), [route.split('?')[0]]);
 
   const path = route.split('?')[0]!;

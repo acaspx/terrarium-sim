@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, Move, X } from 'lucide-react';
 import {
   BLANK_SPEC, buildTerrarium, checkSpec, run, CREW_COUNTS, CREW_IDS, DEPTHS, DRAINAGE, faunaSpecies, forecast,
@@ -6,7 +6,7 @@ import {
   SIZE_LABELS, SUBSTRATES, VESSELS,
   type HardscapeId, type SpecIssue, type TerrariumSpec, type VesselId,
 } from '../../engine/index.js';
-import { Jar3D } from '../jar/Jar3D.js';
+import { Jar3D, type Jar3DProps } from '../jar/Jar3D.js';
 import { store } from '../store.js';
 import { pluralName } from '../format.js';
 import { Segmented, Sparkline } from '../ui/controls.js';
@@ -51,6 +51,26 @@ export function Builder() {
   const deferred = useDeferredValue(spec);
   const fc = useMemo(() => forecast(deferred, 90), [deferred]);
   const [previewDay, setPreviewDay] = useState(0);
+  // The step being worked on decides what the camera frames.
+  const [step, setStep] = useState(0);
+  const formRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = formRef.current;
+    if (!root || typeof IntersectionObserver === 'undefined') return;
+    // A thin band across the screen: the step crossing it is the one being read. On a phone the
+    // preview is pinned to the top, so the band sits lower, below it.
+    const narrow = matchMedia('(max-width: 860px)').matches;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.filter((e) => e.isIntersecting).sort((x, y) => x.boundingClientRect.top - y.boundingClientRect.top)[0];
+        if (hit) setStep(Number((hit.target as HTMLElement).dataset.step));
+      },
+      { rootMargin: narrow ? '-58% 0px -38% 0px' : '-28% 0px -66% 0px' },
+    );
+    root.querySelectorAll('[data-step]').forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
+
   // The plant or animal last tapped, whose notes show under its row.
   const [focusPlant, setFocusPlant] = useState<string | null>(null);
   const [focusCrew, setFocusCrew] = useState<string | null>(null);
@@ -62,6 +82,7 @@ export function Builder() {
     if (spec.plants[i]) update({ plants: spec.plants.map((p, j) => (j === i ? { ...p, at } : p)) });
   };
   const placed = spec.plants.some((p) => p.at);
+  const focus: Focus = arranging ? 'plants' : STEP_FOCUS[step] ?? 'all';
   const issues = useMemo(() => checkSpec(spec), [spec]);
   const issuesFor = (target: string) => issues.filter((i) => i.target === target);
 
@@ -82,39 +103,12 @@ export function Builder() {
   };
 
   return (
+    <ActivateStep.Provider value={setStep}>
     <main className="builder-page">
       <a className="back" href="#/"><ArrowLeft size={16} aria-hidden="true" /> Shelf</a>
       <div className="builder">
-        <aside className="builder-preview" aria-label="Preview and forecast">
-          <div className="stage-3d">
-            <Jar3D spec={spec} state={shown} title={`Preview of ${spec.name}, day ${arranging ? 0 : previewDay}`} onArrange={arranging ? arrange : undefined} />
-            <span className="stage-hint">{arranging ? 'Drag a plant to move it. Drag elsewhere to spin the jar.' : 'Drag to spin. Tap plants, soil and glass.'}</span>
-          </div>
-          <div className="arrange-row">
-            <button type="button" className={`button${arranging ? ' primary' : ''}`} aria-pressed={arranging}
-              onClick={() => setArranging((a) => !a)} disabled={spec.plants.length === 0}>
-              <Move size={16} aria-hidden="true" /> {arranging ? 'Done arranging' : 'Arrange plants'}
-            </button>
-            {placed && (
-              <button type="button" className="button quiet" onClick={() => update({ plants: spec.plants.map(({ at: _at, ...p }) => p) })}>
-                Reset layout
-              </button>
-            )}
-          </div>
-          {arranging ? (
-            <p className="hint arrange-hint">Tall plants shade whatever grows close beneath them. In dim light that slows it down; under bright light it barely matters.</p>
-          ) : (
-            <div className="day-scrub">
-              <span className="field-label">Preview</span>
-              <Segmented<number> label="Preview day" size="sm" value={previewDay} onChange={setPreviewDay}
-                options={[0, ...fc.snapshots.map((x) => x.day)].map((d) => ({ id: d, label: d === 0 ? 'Planted' : `Day ${d}` }))} />
-            </div>
-          )}
-          <Forecast fc={fc} stale={deferred !== spec} issues={issues} />
-        </aside>
-
-        <div className="builder-form">
-          <header className="builder-head">
+        <div className="builder-form" ref={formRef}>
+          <header className="builder-head" data-step={0}>
             <h1>New terrarium</h1>
             <div className="field">
               <span className="field-label">Start from</span>
@@ -297,6 +291,8 @@ export function Builder() {
             <input id="spec-name" className="text-input" value={spec.name} onChange={(e) => setSpec({ ...spec, name: e.target.value })} />
           </Step>
 
+          <Forecast fc={fc} stale={deferred !== spec} issues={issues} />
+
           <div className="builder-submit">
             <button type="button" className="button primary" onClick={create} disabled={spec.plants.length === 0}>
               Plant this terrarium
@@ -304,14 +300,60 @@ export function Builder() {
             <span className="hint">{spec.plants.length === 0 ? 'Add at least one plant first.' : 'It joins your shelf and starts growing.'}</span>
           </div>
         </div>
+        <aside className="builder-preview" aria-label="Preview">
+          <div className="stage-3d">
+            <Jar3D spec={spec} state={shown} title={`Preview of ${spec.name}, day ${arranging ? 0 : previewDay}`}
+              onArrange={arranging ? arrange : undefined} view="iso" focus={focus} />
+            <span className="stage-focus" aria-live="polite">{FOCUS_LABEL[focus]}</span>
+            <button type="button" className={`stage-score${deferred !== spec ? ' stale' : ''}`} onClick={() => document.getElementById('fc')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+              title="See the 90-day forecast">
+              Day {fc.days} health <span className={`score score-${scoreTone(fc.finalScore)}`}>{fc.finalScore}</span>
+            </button>
+            <span className="stage-hint">{arranging ? 'Drag a plant to move it. Drag elsewhere to spin the jar.' : 'Drag to spin. Tap plants, soil and glass.'}</span>
+          </div>
+          <div className="preview-bar">
+            <button type="button" className={`button${arranging ? ' primary' : ''}`} aria-pressed={arranging}
+              onClick={() => setArranging((a) => !a)} disabled={spec.plants.length === 0}>
+              <Move size={16} aria-hidden="true" /> {arranging ? 'Done arranging' : 'Arrange plants'}
+            </button>
+            {arranging ? (
+              <>
+                {placed && (
+                  <button type="button" className="button quiet" onClick={() => update({ plants: spec.plants.map(({ at: _at, ...p }) => p) })}>
+                    Reset layout
+                  </button>
+                )}
+                <p className="hint arrange-hint">Tall plants shade whatever grows close beneath them. In dim light that slows it down.</p>
+              </>
+            ) : (
+              <Segmented<number> label="Preview day" size="sm" value={previewDay} onChange={setPreviewDay}
+                options={[0, ...fc.snapshots.map((x) => x.day)].map((d) => ({ id: d, label: d === 0 ? 'Planted' : `Day ${d}` }))} />
+            )}
+          </div>
+        </aside>
       </div>
     </main>
+    </ActivateStep.Provider>
   );
 }
 
+type Focus = NonNullable<Jar3DProps['focus']>;
+/** What the camera frames for each step: 0 is the recipe picker at the top. */
+const STEP_FOCUS: Record<number, Focus> = { 0: 'all', 1: 'all', 2: 'layers', 3: 'plants', 4: 'crew', 5: 'light', 6: 'all', 7: 'all' };
+const FOCUS_LABEL: Record<Focus, string> = {
+  all: 'The whole jar',
+  layers: 'Layers: drainage and substrate',
+  plants: 'Plants, from above',
+  crew: 'Clean-up crew, up close',
+  light: 'Placement and light',
+};
+/** Lets a step tell the builder it is being worked on. */
+const ActivateStep = createContext<(n: number) => void>(() => undefined);
+
 function Step({ n, title, hint, children }: { n: number; title: string; hint?: string; children: ReactNode }) {
+  const activate = useContext(ActivateStep);
   return (
-    <section className="step" aria-labelledby={`step-${n}`}>
+    <section className="step" aria-labelledby={`step-${n}`} data-step={n} onPointerDownCapture={() => activate(n)} onFocusCapture={() => activate(n)}>
       <h2 id={`step-${n}`}><span className="step-n" aria-hidden="true">{n}</span>{title}</h2>
       {hint && <p className="step-hint">{hint}</p>}
       {children}
@@ -338,11 +380,13 @@ function Issues({ list }: { list: SpecIssue[] }) {
   );
 }
 
+const scoreTone = (score: number) => (score >= 80 ? 'good' : score >= 55 ? 'warn' : 'critical');
+
 function Forecast({ fc, stale, issues }: { fc: ReturnType<typeof forecast>; stale: boolean; issues: SpecIssue[] }) {
   const critical = issues.filter((i) => i.severity === 'critical');
-  const tone = fc.finalScore >= 80 ? 'good' : fc.finalScore >= 55 ? 'warn' : 'critical';
+  const tone = scoreTone(fc.finalScore);
   return (
-    <section className={`forecast${stale ? ' stale' : ''}`} aria-labelledby="fc" aria-live="polite">
+    <section className={`step forecast${stale ? ' stale' : ''}`} aria-labelledby="fc" aria-live="polite">
       <h2 id="fc">First {fc.days} days</h2>
       <div className="forecast-score">
         <span className={`score score-${tone} big`}>{fc.finalScore}</span>
