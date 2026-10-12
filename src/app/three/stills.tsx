@@ -35,18 +35,19 @@ function ensureRoot() {
   return { root, canvas };
 }
 
-function draw(spec: TerrariumSpec, state: TerrariumState): string | null {
+function draw(key: string, spec: TerrariumSpec, state: TerrariumState): string | null {
   const { root, canvas } = ensureRoot();
   flushSync(() => {
+    // Keyed per still: a fresh scene each time, so nothing (the camera above all) carries over from the last jar.
     root.render(
-      <JarScene spec={spec} state={state} lively={false} wall="#ffffff" motion={newMotion()} autoRotate={false} view="front" focus="all" bare />,
+      <JarScene key={key} spec={spec} state={state} lively={false} wall="#ffffff" motion={newMotion()} autoRotate={false} view="front" focus="all" bare />,
     );
   });
   const rs = _roots.get(canvas)?.store.getState();
   if (!rs) return null;
   rs.gl.setClearColor(0x000000, 0);
   // A few frames: the first builds the environment light and shadows, the rest settle the camera.
-  for (let i = 0; i < 4; i++) advance(performance.now() + i * 16, true, rs);
+  for (let i = 0; i < 6; i++) advance(performance.now() + i * 16, true, rs);
   return canvas.toDataURL('image/webp', 0.85);
 }
 
@@ -65,7 +66,7 @@ function pump() {
     }
     let url: string | null = null;
     try {
-      url = done.has(job.key) ? done.get(job.key)! : draw(job.spec, job.state);
+      url = done.has(job.key) ? done.get(job.key)! : draw(job.key, job.spec, job.state);
     } catch (e) {
       console.warn('Could not render a still', e);
       url = null;

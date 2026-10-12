@@ -59,8 +59,7 @@ export const dayOfState = (s: TerrariumState) => Math.floor(s.hour / 24);
 export const scoreOf = (s: TerrariumState) => healthScore(s);
 
 const stillCache = new Map<string, string | null>();
-/** Off until the offscreen stills stop coming out blank (transparent glass over a transparent background). */
-const STILLS_ENABLED = false;
+
 
 /** A rendered 3D still of the jar, with the drawing standing in until it is ready (or without WebGL). */
 export function JarStill({ k, spec, state, title }: { k: string; spec: TerrariumSpec; state: TerrariumState; title: string }) {
@@ -70,7 +69,7 @@ export function JarStill({ k, spec, state, title }: { k: string; spec: Terrarium
       setSrc(stillCache.get(k) ?? null);
       return;
     }
-    if (!STILLS_ENABLED || !hasWebGL()) return;
+    if (!hasWebGL()) return;
     let live = true;
     import('../three/stills.js')
       .then((m) => m.renderStill(k, spec, state))
