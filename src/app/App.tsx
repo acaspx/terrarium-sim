@@ -5,11 +5,20 @@ import { KeeperPage, KeeperShelf, Playground, SharedJar } from './screens/Playgr
 import { useIdentity } from './playground.js';
 import { Shelf } from './screens/Shelf.js';
 import { startClock } from './store.js';
+import { PageBoundary } from './ui/PageBoundary.js';
 import { TimeControl } from './ui/TimeControl.js';
 
 const subscribeHash = (fn: () => void) => {
   window.addEventListener('hashchange', fn);
   return () => window.removeEventListener('hashchange', fn);
+};
+/** A malformed address (a stray %) must not crash the app shell, which sits above the page safety net. */
+const safeDecode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 };
 const useRoute = () => useSyncExternalStore(subscribeHash, () => location.hash.replace(/^#/, '') || '/');
 
@@ -34,7 +43,7 @@ export function App() {
   // #/playground links from before the community shelf still work.
   else if (/^\/(community|playground)\/./.test(path)) screen = <SharedJar key={path} id={path.slice(path.indexOf('/', 1) + 1)} />;
   else if (path === '/community' || path === '/playground') screen = <Playground />;
-  else if (path.startsWith('/u/')) screen = <KeeperShelf key={path} name={decodeURIComponent(path.slice(3)).toLowerCase()} />;
+  else if (path.startsWith('/u/')) screen = <KeeperShelf key={path} name={safeDecode(path.slice(3)).toLowerCase()} />;
   else if (path === '/keeper') screen = <KeeperPage />;
   else if (path === '/new') screen = <Builder key={route} />;
   else screen = <Shelf />;
@@ -54,7 +63,7 @@ export function App() {
         </div>
         <TimeControl />
       </header>
-      {screen}
+      <PageBoundary key={path}>{screen}</PageBoundary>
     </>
   );
 }

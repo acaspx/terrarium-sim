@@ -34,7 +34,10 @@ function gpuName(): string {
   try {
     const gl = document.createElement('canvas').getContext('webgl');
     const ext = gl?.getExtension('WEBGL_debug_renderer_info');
-    return (ext && gl ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '') ?? '';
+    const name = ext && gl ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    // Release the probe straight away; live contexts are capped per page.
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
   } catch {
     return '';
   }

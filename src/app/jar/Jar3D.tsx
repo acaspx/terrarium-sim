@@ -8,7 +8,11 @@ let webgl: boolean | null = null;
 export function hasWebGL() {
   if (webgl === null) {
     try {
-      webgl = !!document.createElement('canvas').getContext('webgl2');
+      const gl = document.createElement('canvas').getContext('webgl2');
+      webgl = !!gl;
+      // Release the probe at once: browsers cap live WebGL contexts (Safari on iPhone at a handful),
+      // and one held here would count against the 3D views.
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
     } catch {
       webgl = false;
     }

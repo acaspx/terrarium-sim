@@ -35,7 +35,8 @@ function ensureRoot() {
   return { root, canvas };
 }
 
-function draw(key: string, spec: TerrariumSpec, state: TerrariumState): string | null {
+/** Render a still, then encode it off the main thread (toBlob) instead of blocking the page (toDataURL). */
+function draw(key: string, spec: TerrariumSpec, state: TerrariumState): Promise<string | null> {
   const { root, canvas } = ensureRoot();
   flushSync(() => {
     // Keyed per still: a fresh scene each time, so nothing (the camera above all) carries over from the last jar.
@@ -44,11 +45,11 @@ function draw(key: string, spec: TerrariumSpec, state: TerrariumState): string |
     );
   });
   const rs = _roots.get(canvas)?.store.getState();
-  if (!rs) return null;
+  if (!rs) return Promise.resolve(null);
   rs.gl.setClearColor(0x000000, 0);
   // A few frames: the first builds the environment light and shadows, the rest settle the camera.
   for (let i = 0; i < 6; i++) advance(performance.now() + i * 16, true, rs);
-  return canvas.toDataURL('image/webp', 0.85);
+  return new Promise((resolve) => canvas.toBlob((b) => resolve(b ? URL.createObjectURL(b) : null), 'image/webp', 0.85));
 }
 
 const done = new Map<string, string | null>();
@@ -64,17 +65,22 @@ function pump() {
       running = false;
       return;
     }
-    let url: string | null = null;
+    const finish = (url: string | null) => {
+      done.set(job.key, url);
+      job.resolve(url);
+      // One per frame keeps scrolling smooth while a shelf fills in.
+      requestAnimationFrame(next);
+    };
+    if (done.has(job.key)) return finish(done.get(job.key)!);
     try {
-      url = done.has(job.key) ? done.get(job.key)! : draw(job.key, job.spec, job.state);
+      draw(job.key, job.spec, job.state).then(finish, (e) => {
+        console.warn('Could not render a still', e);
+        finish(null);
+      });
     } catch (e) {
       console.warn('Could not render a still', e);
-      url = null;
+      finish(null);
     }
-    done.set(job.key, url);
-    job.resolve(url);
-    // One per frame keeps scrolling smooth while a shelf fills in.
-    requestAnimationFrame(next);
   };
   requestAnimationFrame(next);
 }
