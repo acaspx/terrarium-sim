@@ -34,7 +34,10 @@ export function App() {
     ro.observe(bar);
     return () => ro.disconnect();
   }, []);
-  useEffect(() => window.scrollTo(0, 0), [route.split('?')[0]]);
+  // Block body: newer browsers return a promise from scrollTo, and an effect may only return a cleanup function.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [route.split('?')[0]]);
 
   const path = route.split('?')[0]!;
   const ownShelf = !!me && path === `/u/${me.name}`;
