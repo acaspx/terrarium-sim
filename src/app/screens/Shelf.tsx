@@ -5,6 +5,7 @@ import { EmptyJar, Jar } from '../jar/Jar.js';
 import { dayOf, glassWord, headline, moistureWord, plural, pluralName } from '../format.js';
 import { unseenEvents, useStore, type JarRecord } from '../store.js';
 import { Segmented } from '../ui/controls.js';
+import { Contain } from '../ui/PageBoundary.js';
 import type React from 'react';
 
 type View = 'shelf' | 'table';
@@ -53,7 +54,10 @@ export function Shelf() {
         <ShelfGrid count={jars.length + 1}>
           {jars.map((j) => (
             <li key={j.id}>
-              <ShelfJar j={j} />
+              {/* One jar that cannot be drawn must not take the rest of the shelf with it. */}
+              <Contain label={`jar ${j.spec.name}`} fallback={<a className="shelf-slot" href={`#/jar/${j.id}`}><span className="tag"><span className="tag-name">{j.spec.name}</span><span className="tag-line">Could not be drawn</span></span></a>}>
+                <ShelfJar j={j} />
+              </Contain>
             </li>
           ))}
           <li>
@@ -176,7 +180,7 @@ function CompareTable({ jars }: { jars: JarRecord[] }) {
               <tr key={j.id}>
                 <th scope="row">
                   <a href={`#/jar/${j.id}`} className="compare-name">
-                    <span className="compare-thumb"><Jar spec={j.spec} state={s} /></span>
+                    <span className="compare-thumb"><Contain fallback={null}><Jar spec={j.spec} state={s} /></Contain></span>
                     {j.spec.name}
                   </a>
                 </th>
