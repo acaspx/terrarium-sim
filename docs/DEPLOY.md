@@ -15,7 +15,9 @@ connected.
 - [ ] Connect it to this project for **Production and Preview**. This sets
       `KV_REST_API_URL` and `KV_REST_API_TOKEN`. (`UPSTASH_REDIS_REST_URL` and
       `UPSTASH_REDIS_REST_TOKEN` also work if you create the database in Upstash
-      directly and add them by hand.)
+      directly and add them by hand. Prefixed names such as
+      `STORAGE_KV_REST_API_URL`, and an Upstash `REDIS_URL` on its own, are
+      found too.)
 - [ ] Redeploy the preview after adding the variables. Environment variables
       only reach deployments built after they were set.
 
@@ -32,8 +34,9 @@ Open these in a browser where you are logged in to Vercel (preview deployments
 are usually behind Vercel Authentication, so `curl` gets a 401):
 
 - [ ] `https://<preview-url>/api/terrariums` should return `{"items":[],"next":null}`.
-  - `503` "not connected to storage": the env vars are missing on Preview, or
-    the deploy predates them. Redo step 1.
+  - `503` "not connected to storage": the env vars are missing, or the deploy
+    predates them. The response's `setup` field says which storage variable
+    names the deployment has (names only, never values). Redo step 1.
   - `500` or `FUNCTION_INVOCATION_FAILED`: open **Deployments → the preview →
     Functions → api/terrariums → Logs** and send the error. The likely fix is
     bundling the function's imports.

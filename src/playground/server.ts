@@ -448,8 +448,9 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promi
 }
 
 /** Routes /api/keepers and /api/terrariums. */
-export async function handle(req: Request, store: PlaygroundStore | null): Promise<Response> {
-  if (!store) return problem(503, 'The community shelf is not connected to storage yet.');
+/** `why` explains a missing store, for whoever is setting up the deployment. */
+export async function handle(req: Request, store: PlaygroundStore | null, why?: string): Promise<Response> {
+  if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(why ? { setup: why } : {}) }, 503);
   const url = new URL(req.url);
   try {
     if (url.pathname.endsWith('/keepers')) return await keepers(req, url, store);
@@ -461,10 +462,41 @@ export async function handle(req: Request, store: PlaygroundStore | null): Promi
   }
 }
 
-/** The store configured by the environment, or null when none is set. */
-export async function storeFromEnv(env: Record<string, string | undefined>): Promise<PlaygroundStore | null> {
-  const url = env.KV_REST_API_URL ?? env.UPSTASH_REDIS_REST_URL;
-  const token = env.KV_REST_API_TOKEN ?? env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? redisStore(url, token) : null;
+type Env = Record<string, string | undefined>;
+export type StorageConfig = { url: string; token: string; from: string } | { problem: string };
+
+/**
+ * Finds the Upstash REST address and token, under whichever names the deployment has them:
+ * KV_REST_API_URL/TOKEN (Vercel's integration), UPSTASH_REDIS_REST_URL/TOKEN (Upstash's own),
+ * either with a prefix (Vercel adds one when it was asked to), or else an Upstash redis:// URL,
+ * whose password is also its REST token.
+ */
+export function storageConfig(env: Env): StorageConfig {
+  const names = Object.keys(env).filter((k) => env[k]);
+  for (const suffix of ['KV_REST_API', 'UPSTASH_REDIS_REST']) {
+    const urlKey = [`${suffix}_URL`, ...names.filter((k) => k.endsWith(`_${suffix}_URL`)).sort()].find((k) => env[k] && env[k.replace(/_URL$/, '_TOKEN')]);
+    if (urlKey) return { url: env[urlKey]!, token: env[urlKey.replace(/_URL$/, '_TOKEN')]!, from: urlKey };
+  }
+  const redisKeys = names.filter((k) => /(^|_)(REDIS_URL|KV_URL)$/.test(k)).sort();
+  for (const k of redisKeys) {
+    try {
+      const u = new URL(env[k]!);
+      if (/^rediss?:$/.test(u.protocol) && u.hostname.endsWith('.upstash.io') && u.password) {
+        return { url: `https://${u.hostname}`, token: decodeURIComponent(u.password), from: k };
+      }
+    } catch {
+      // Not a URL; reported below.
+    }
+  }
+  // Names only, never values: enough to tell what the deployment was given.
+  const seen = names.filter((k) => /KV|REDIS|UPSTASH/i.test(k)).sort();
+  if (seen.length === 0) return { problem: 'This deployment has no storage settings. Connect an Upstash Redis database to the project, for Production too, then redeploy.' };
+  if (redisKeys.length) return { problem: `Found ${seen.join(', ')}, but no Upstash REST address and token, and ${redisKeys.join(', ')} does not point to Upstash. The shelf needs an Upstash Redis database.` };
+  return { problem: `Found ${seen.join(', ')}, but no matching REST address and token pair.` };
 }
 
+/** The store configured by the environment, or null (with the reason) when there is none. */
+export async function storeFromEnv(env: Env): Promise<PlaygroundStore | null> {
+  const c = storageConfig(env);
+  return 'url' in c ? redisStore(c.url, c.token) : null;
+}
