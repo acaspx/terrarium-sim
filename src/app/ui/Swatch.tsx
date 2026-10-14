@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Minus } from 'lucide-react';
 import { hasWebGL } from '../jar/Jar3D.js';
 
 const images = new Map<string, string | null>();
@@ -50,12 +51,15 @@ export interface SwatchProps {
   disabled?: boolean;
   empty?: boolean;
   onClick: () => void;
+  /** Adds a small minus button on the disc, for taking one away. */
+  onRemove?: () => void;
+  removeLabel?: string;
 }
 
-export function Swatch({ k, label, detail, selected = false, kind = 'radio', badge, disabled, empty, onClick }: SwatchProps) {
+export function Swatch({ k, label, detail, selected = false, kind = 'radio', badge, disabled, empty, onClick, onRemove, removeLabel }: SwatchProps) {
   const src = useSwatch(k);
   const state = kind === 'radio' ? { role: 'radio', 'aria-checked': selected } : kind === 'toggle' ? { 'aria-pressed': selected } : {};
-  return (
+  const swatch = (
     <button type="button" className={`swatch${selected ? ' on' : ''}`} title={detail} disabled={disabled} onClick={onClick} {...state}>
       <span className={`swatch-disc${empty ? ' empty' : ''}`} style={empty ? undefined : { backgroundColor: tintOf(k) }}>
         {src && <img src={src} alt="" draggable={false} />}
@@ -63,6 +67,16 @@ export function Swatch({ k, label, detail, selected = false, kind = 'radio', bad
       </span>
       <span className="swatch-label">{label}</span>
     </button>
+  );
+  if (!onRemove) return swatch;
+  // A sibling, not a child: a button cannot hold another button.
+  return (
+    <span className="swatch-wrap">
+      {swatch}
+      <button type="button" className="swatch-remove" aria-label={removeLabel ?? 'Remove one'} title={removeLabel} onClick={onRemove}>
+        <Minus size={14} strokeWidth={3} aria-hidden="true" />
+      </button>
+    </span>
   );
 }
 
