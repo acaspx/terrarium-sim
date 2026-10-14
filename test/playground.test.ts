@@ -134,6 +134,13 @@ describe('community shelf', () => {
     expect(validateSpec({ ...spec(), name: '  Fern‮  gully\u0000 ' }).name).toBe('Fern gully');
   });
 
+  it('keeps where the wood and stone were moved, only for pieces the jar has', () => {
+    const s = { ...spec(), hardscape: ['wood'], placed: { wood: { at: [0.3, 9], turn: -Math.PI / 2 }, stone: { at: [0.1, 0.1] } } };
+    expect(validateSpec(s).placed).toEqual({ wood: { at: [0.3, 1], turn: 4.712 } });
+    expect(validateSpec({ ...s, placed: { wood: { at: ['x', 1] } } }).placed).toBeUndefined();
+    expect('placed' in validateSpec({ ...s, placed: undefined })).toBe(false);
+  });
+
   it('keeps only the state the engine would produce', () => {
     const s = grown(spec(), 10) as unknown as Record<string, unknown>;
     const evil = {

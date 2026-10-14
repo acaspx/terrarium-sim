@@ -62,6 +62,22 @@ function position(x: unknown): [number, number] | undefined {
   return [c(u!), c(v!)];
 }
 
+/** Where the wood and stone were moved to, kept only for pieces the jar has. */
+function placement(x: unknown, hardscape: string[]): TerrariumSpec['placed'] {
+  if (!x || typeof x !== 'object') return undefined;
+  const o = x as Record<string, { at?: unknown; turn?: unknown } | undefined>;
+  const out: NonNullable<TerrariumSpec['placed']> = {};
+  const woodAt = hardscape.includes('wood') ? position(o.wood?.at) : undefined;
+  if (woodAt) {
+    const turn = Number(o.wood?.turn);
+    out.wood = { at: woodAt, ...(Number.isFinite(turn) ? { turn: Math.round((((turn % TAU) + TAU) % TAU) * 1000) / 1000 } : {}) };
+  }
+  const stoneAt = hardscape.includes('stone') ? position(o.stone?.at) : undefined;
+  if (stoneAt) out.stone = { at: stoneAt };
+  return out.wood || out.stone ? out : undefined;
+}
+const TAU = Math.PI * 2;
+
 const oneOf = <T extends string>(x: unknown, ids: readonly T[], what: string): T =>
   ids.includes(x as T) ? (x as T) : fail(`Unknown ${what}.`);
 
@@ -76,6 +92,8 @@ export function validateSpec(x: unknown): TerrariumSpec {
 
   if (!Array.isArray(o.hardscape)) fail('Bad hardscape.');
   const hardscape = [...new Set((o.hardscape as unknown[]).map((h) => oneOf(h, HARDSCAPE.map((x) => x.id), 'hardscape')))];
+
+  const placed = placement(o.placed, hardscape);
 
   if (!Array.isArray(o.plants) || o.plants.length === 0 || o.plants.length > LIMITS.plants) fail('A shared terrarium needs one to eight plants.');
   const plants = (o.plants as Record<string, unknown>[]).map((p) => {
@@ -104,7 +122,7 @@ export function validateSpec(x: unknown): TerrariumSpec {
     drainage: oneOf(o.drainage, DRAINAGE.map((d) => d.id), 'drainage'),
     substrate: oneOf(o.substrate, SUBSTRATES.map((s) => s.id), 'substrate'),
     depth: oneOf(o.depth, DEPTHS.map((d) => d.id), 'depth'),
-    hardscape, plants, fauna,
+    hardscape, ...(placed ? { placed } : {}), plants, fauna,
     placement: oneOf(o.placement, PLACEMENTS.map((p) => p.id), 'placement'),
     growLight: oneOf(o.growLight, GROW_LIGHTS.map((g) => g.id), 'grow light'),
     room: oneOf(o.room, ROOMS.map((r) => r.id), 'room'),
