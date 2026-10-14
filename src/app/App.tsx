@@ -7,6 +7,8 @@ import { Shelf } from './screens/Shelf.js';
 import { startClock } from './store.js';
 import { PageBoundary } from './ui/PageBoundary.js';
 import { TimeControl } from './ui/TimeControl.js';
+import { Inbox } from './ui/Inbox.js';
+import { startNotifier } from './notify.js';
 
 const subscribeHash = (fn: () => void) => {
   window.addEventListener('hashchange', fn);
@@ -26,6 +28,7 @@ export function App() {
   const route = useRoute();
   const me = useIdentity();
   useEffect(() => startClock(), []);
+  useEffect(() => startNotifier(), []);
   // Pinned panels sit just below the sticky top bar, whose height changes as it wraps on narrow screens.
   useEffect(() => {
     const bar = document.querySelector<HTMLElement>('.topbar');
@@ -61,7 +64,10 @@ export function App() {
             </a>
           </nav>
         </div>
-        <TimeControl />
+        <div className="topbar-tools">
+          <Inbox />
+          <TimeControl />
+        </div>
       </header>
       <PageBoundary key={path}>{screen}</PageBoundary>
     </>
