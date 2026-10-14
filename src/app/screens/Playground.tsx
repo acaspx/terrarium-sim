@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowLeft, Film, Flag, Heart, Link2, Sprout, Trash2 } from 'lucide-react';
+import { ArrowLeft, Film, Flag, Heart, Link2, Sprout, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import {
   DRAINAGE, faunaSpecies, LIDS, PLACEMENTS, plantSpecies, SUBSTRATES, VESSELS,
 } from '../../engine/index.js';
 import { Jar3D } from '../jar/Jar3D.js';
 import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
 import {
-  getKeeper, getShared, hasLiked, like, listByKeeper, listShared, plantCopy, report, signOut, unshare, useIdentity,
+  getKeeper, getShared, hasLiked, like, listByKeeper, listFollowingFeed, listShared, plantCopy, report, setFollow, signOut, unshare,
+  useFollowing, useIdentity,
   type KeeperProfile, type Submission,
 } from '../playground.js';
 import { Segmented } from '../ui/controls.js';
@@ -17,7 +18,7 @@ import { FOCUS_LABEL, useSectionFocus } from '../ui/useSectionFocus.js';
 import { lifeOf, type Moment } from '../../playground/living.js';
 import type { TerrariumState } from '../../engine/index.js';
 
-type Sort = 'recent' | 'liked';
+type Sort = 'recent' | 'liked' | 'following';
 
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60000);
@@ -116,11 +117,57 @@ function LivingCard({ sub, showKeeper }: { sub: Submission; showKeeper: boolean 
   );
 }
 
-/** The community shelf: every keeper's shared terrariums, newest or most liked. */
+/** Follow a keeper to see their new jars under Following. Signed out, it leads to picking a username. */
+function FollowButton({ name, onFollowers, named = false }: { name: string; onFollowers?: (n: number) => void; named?: boolean }) {
+  const me = useIdentity();
+  const following = useFollowing();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (me?.name === name) return null;
+  if (!me) {
+    return (
+      <a className="button follow" href="#/keeper" title="Pick a username to follow keepers">
+        <UserPlus size={16} aria-hidden="true" /> Follow{named && ` @${name}`}
+      </a>
+    );
+  }
+  if (!following) return null;
+  const on = following.has(name);
+  const toggle = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const followers = await setFollow(name, !on);
+      onFollowers?.(followers);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="follow-wrap">
+      <button type="button" className={`button follow${on || named ? '' : ' primary'}`} aria-pressed={on} onClick={toggle} disabled={busy}>
+        {on ? <UserCheck size={16} aria-hidden="true" /> : <UserPlus size={16} aria-hidden="true" />}
+        {on ? 'Following' : 'Follow'}
+        {named ? ` @${name}` : <span className="visually-hidden"> @{name}</span>}
+      </button>
+      {error && <span className="hint" role="alert">{error}</span>}
+    </span>
+  );
+}
+
+const SORTS: Sort[] = ['recent', 'liked', 'following'];
+
+/** The community shelf: every keeper's shared terrariums, newest or most liked, or just from keepers you follow. */
 export function Playground() {
   const me = useIdentity();
-  const [sort, setSort] = useState<Sort>(() => (new URLSearchParams(location.hash.split('?')[1] ?? '').get('sort') === 'liked' ? 'liked' : 'recent'));
-  const load = useCallback((cursor: number) => listShared(sort, cursor), [sort]);
+  const [chosen, setSort] = useState<Sort>(() => {
+    const q = new URLSearchParams(location.hash.split('?')[1] ?? '').get('sort') as Sort | null;
+    return q && SORTS.includes(q) ? q : 'recent';
+  });
+  const sort = chosen === 'following' && !me ? 'recent' : chosen;
+  const load = useCallback((cursor: number) => (sort === 'following' ? listFollowingFeed(cursor) : listShared(sort, cursor)), [sort]);
   return (
     <main className="shelf-page">
       <div className="shelf-intro">
@@ -130,10 +177,16 @@ export function Playground() {
           {me ? <a href={`#/u/${me.name}`}>Your shelf</a> : <a href="#/keeper">Pick a username to share yours</a>}.
         </p>
         <Segmented<Sort> label="Sort" size="sm" value={sort} onChange={setSort}
-          options={[{ id: 'recent', label: 'Newest' }, { id: 'liked', label: 'Most liked' }]} />
+          options={[
+            { id: 'recent', label: 'Newest' },
+            { id: 'liked', label: 'Most liked' },
+            ...(me ? [{ id: 'following' as const, label: 'Following' }] : []),
+          ]} />
       </div>
-      <SharedGrid load={load} label="Shared terrariums"
-        empty={<>Nothing has been shared yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>} />
+      <SharedGrid load={load} label={sort === 'following' ? 'Terrariums from keepers you follow' : 'Shared terrariums'}
+        empty={sort === 'following'
+          ? <>Nothing here yet. Open a keeper&rsquo;s shelf and choose <strong>Follow</strong>, and the jars they share show up here.</>
+          : <>Nothing has been shared yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>} />
     </main>
   );
 }
@@ -160,9 +213,12 @@ export function KeeperShelf({ name }: { name: string }) {
     <main className="shelf-page">
       <a className="back" href="#/community"><ArrowLeft size={16} aria-hidden="true" /> Community shelf</a>
       <div className="shelf-intro">
-        <h1>@{name}</h1>
+        <div className="keeper-title">
+          <h1>@{name}</h1>
+          <FollowButton name={name} onFollowers={(followers) => setProfile((p) => (p ? { ...p, followers } : p))} />
+        </div>
         <p className="lede">
-          {profile ? <>Keeper since {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. {plural(profile.count, 'terrarium')} shared.</> : '\u00a0'}
+          {profile ? <>Keeper since {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}. {plural(profile.count, 'terrarium')} shared, {plural(profile.followers ?? 0, 'follower')}.</> : '\u00a0'}
           {mine && <> This is your shelf. <a href="#/keeper">Your account</a></>}
         </p>
       </div>
@@ -171,6 +227,26 @@ export function KeeperShelf({ name }: { name: string }) {
           ? <>Nothing here yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>
           : <>@{name} has not shared anything yet.</>} />
     </main>
+  );
+}
+
+/** On your account page: the keepers you follow. */
+function FollowingList() {
+  const following = useFollowing();
+  if (!following) return null;
+  const names = [...following];
+  return (
+    <section className="block following-list">
+      <h2>Following</h2>
+      {names.length === 0 ? (
+        <p className="hint">You do not follow anyone yet. Follow keepers from their shelves to see their new jars under <a href="#/community?sort=following">Following</a>.</p>
+      ) : (
+        <>
+          <ul>{names.map((n) => <li key={n}><a href={`#/u/${n}`}>@{n}</a></li>)}</ul>
+          <a href="#/community?sort=following">Their newest jars</a>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -192,6 +268,7 @@ export function KeeperPage() {
             <a className="button primary" href={`#/u/${me.name}`}>Your shelf</a>
             <button type="button" className="button" onClick={() => setReveal((r) => !r)}>{reveal ? 'Hide recovery code' : 'Show recovery code'}</button>
           </div>
+          <FollowingList />
           {reveal && (
             <div className="keeper-form">
               <p className="recovery-code">{me.key}</p>
@@ -328,6 +405,7 @@ export function SharedJar({ id }: { id: string }) {
             <button type="button" className="button primary" onClick={() => plantCopy(s.spec, `@${s.keeper}`)}>
               <Sprout size={18} aria-hidden="true" /> Plant a copy
             </button>
+            <FollowButton name={s.keeper} named />
             <button type="button" className={`button like${liked ? ' on' : ''}`} onClick={onLike} aria-pressed={liked} disabled={busy}>
               <Heart size={16} aria-hidden="true" fill={liked ? 'currentColor' : 'none'} /> {s.likes}
               <span className="visually-hidden">{liked ? ' likes, including yours' : ' likes. Like this terrarium'}</span>

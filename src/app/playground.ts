@@ -14,6 +14,7 @@ export interface KeeperProfile {
   name: string;
   createdAt: number;
   count: number;
+  followers: number;
 }
 
 const IDENTITY_KEY = 'terrarium-sim:keeper';
@@ -91,6 +92,67 @@ export async function signIn(name: string, key: string): Promise<Identity> {
 
 export function signOut() {
   setIdentity(null);
+}
+
+// ------------------------------------------------------------------ following
+
+/** Who the signed-in keeper follows; null until it has loaded (or when signed out). */
+let following: { owner: string; names: Set<string> } | null = null;
+let loadingFollows: string | null = null;
+const followListeners = new Set<() => void>();
+function setFollowing(next: typeof following) {
+  following = next;
+  for (const fn of followListeners) fn();
+}
+
+function loadFollowing() {
+  const me = identity;
+  if (!me || loadingFollows === me.name || following?.owner === me.name) return;
+  loadingFollows = me.name;
+  request<{ names: string[] }>('keepers?action=following', { headers: auth() })
+    .then(({ names }) => identity?.name === me.name && setFollowing({ owner: me.name, names: new Set(names) }))
+    .catch(() => {
+      // Follow buttons stay hidden until the list loads; the next visit tries again.
+    })
+    .finally(() => {
+      loadingFollows = null;
+    });
+}
+
+/** The keepers you follow, or null while signed out or still loading. */
+export function useFollowing(): Set<string> | null {
+  const me = useIdentity();
+  const f = useSyncExternalStore(
+    (fn) => {
+      followListeners.add(fn);
+      return () => followListeners.delete(fn);
+    },
+    () => following,
+  );
+  if (!me) return null;
+  if (f?.owner !== me.name) {
+    loadFollowing();
+    return null;
+  }
+  return f.names;
+}
+
+/** Follow or unfollow a keeper. Returns their new follower count. */
+export async function setFollow(name: string, on: boolean): Promise<number> {
+  const { followers } = await request<{ followers: number }>(`keepers?action=${on ? 'follow' : 'unfollow'}`, {
+    method: 'POST', headers: auth(), body: JSON.stringify({ name }),
+  });
+  if (identity && following?.owner === identity.name) {
+    const names = new Set(following.names);
+    if (on) names.add(name);
+    else names.delete(name);
+    setFollowing({ owner: identity.name, names });
+  }
+  return followers;
+}
+
+export function listFollowingFeed(cursor = 0) {
+  return request<{ items: Submission[]; next: number | null }>(`terrariums?feed=following&cursor=${cursor}`, { headers: auth() });
 }
 
 export function getKeeper(name: string) {

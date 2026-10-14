@@ -153,3 +153,49 @@ describe('community shelf', () => {
     expect((await handle(new Request('http://x/api/keepers?name=ana'), null)).status).toBe(503);
   });
 });
+
+describe('following', () => {
+  const follow = (store: Store, k: { name: string; key: string }, name: string, action = 'follow') =>
+    call(store, 'POST', `?action=${action}`, { name }, as(k), 'keepers');
+  const ids = async (res: Response) => ((await res.json()).items as { id: string }[]).map((x) => x.id);
+
+  it('follows and unfollows keepers, and counts followers on their profile', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    expect(await (await follow(store, ana, 'Bob')).json()).toEqual({ following: true, followers: 1 });
+    // Following twice counts once.
+    expect((await (await follow(store, ana, 'bob')).json()).followers).toBe(1);
+    expect((await (await call(store, 'GET', '?name=bob', undefined, {}, 'keepers')).json()).followers).toBe(1);
+    expect((await (await call(store, 'GET', '?action=following', undefined, as(ana), 'keepers')).json()).names).toEqual(['bob']);
+    expect(await (await follow(store, ana, 'bob', 'unfollow')).json()).toEqual({ following: false, followers: 0 });
+    expect((await (await call(store, 'GET', '?action=following', undefined, as(ana), 'keepers')).json()).names).toEqual([]);
+    expect((await follow(store, bob, 'bob')).status).toBe(400);
+    expect((await follow(store, bob, 'nobody')).status).toBe(404);
+  });
+
+  it('needs a keeper, with the right code, to follow or to see who they follow', async () => {
+    const store = memoryStore();
+    await claim(store, 'ana');
+    await claim(store, 'bob');
+    expect((await follow(store, { name: 'ana', key: newRecoveryCode() }, 'bob')).status).toBe(401);
+    expect((await call(store, 'GET', '?action=following', undefined, {}, 'keepers')).status).toBe(401);
+    expect((await call(store, 'GET', '?feed=following')).status).toBe(401);
+  });
+
+  it('shows the newest jars from keepers you follow, and nobody else', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    const cy = await claim(store, 'cy');
+    const first = (await (await share(store, bob)).json()).item.id;
+    await share(store, cy);
+    await new Promise((r) => setTimeout(r, 2));
+    const second = (await (await share(store, bob)).json()).item.id;
+    expect(await ids(await call(store, 'GET', '?feed=following', undefined, as(ana)))).toEqual([]);
+    await follow(store, ana, 'bob');
+    const res = await call(store, 'GET', '?feed=following', undefined, as(ana));
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await ids(res)).toEqual([second, first]);
+  });
+});
