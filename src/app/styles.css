@@ -435,6 +435,18 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .swatch.on .swatch-disc { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--moss), 0 4px 10px -4px rgba(0, 0, 0, 0.4); }
 .swatch:focus-visible { outline: none; }
 .swatch:focus-visible .swatch-disc { outline: 2px solid var(--dew); outline-offset: 5px; }
+.swatch-wrap { position: relative; display: inline-flex; }
+/* Top left of the disc (the swatch is 76px wide, its disc 58px), opposite the count. */
+.swatch-remove {
+  position: absolute; left: 5px; top: -4px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface); color: var(--ink);
+  box-shadow: 0 0 0 2px var(--bg), inset 0 0 0 1.5px var(--rule); cursor: pointer;
+  animation: swatch-in 0.18s ease-out;
+}
+/* A bigger target than it looks, for fingers. */
+.swatch-remove::before { content: ''; position: absolute; inset: -8px; }
+.swatch-remove:hover { color: var(--bg); background: var(--ink); }
+.swatch-remove:focus-visible { outline: 2px solid var(--dew); outline-offset: 2px; }
 .swatch-badge {
   position: absolute; right: -4px; top: -4px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
   display: grid; place-items: center; font: 700 12px/1 var(--font-body); font-variant-numeric: tabular-nums;
