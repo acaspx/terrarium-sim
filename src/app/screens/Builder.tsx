@@ -168,7 +168,7 @@ export function Builder() {
             </Field>
           </Step>
 
-          <Step n={3} title="Plants" hint={`Tap a plant to add one, up to ${MAX_PLANTS}. Choose plants that like the same conditions.`}>
+          <Step n={3} title="Plants" hint={`Tap a plant to add one, up to ${MAX_PLANTS}, and tap \u2212 to take one out. Choose plants that like the same conditions.`}>
             <Issues list={issuesFor('plants')} />
             <SwatchRow label="Add a plant" multi>
               {PLANT_IDS.map((id) => {
@@ -180,7 +180,13 @@ export function Builder() {
                     onClick={() => {
                       update({ plants: [...spec.plants, { speciesId: id, size: 'small' }] });
                       setFocusPlant(id);
-                    }} />
+                    }}
+                    removeLabel={`Take out a ${sp.commonName.toLowerCase()}`}
+                    onRemove={n > 0 ? () => {
+                      // The last one added goes first, so plants placed earlier keep their spots.
+                      const last = spec.plants.map((p) => p.speciesId).lastIndexOf(id);
+                      update({ plants: spec.plants.filter((_, i) => i !== last) });
+                    } : undefined} />
                 );
               })}
             </SwatchRow>
