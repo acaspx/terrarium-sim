@@ -12,7 +12,7 @@ import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, ty
 import { CameraRig, type Focus, type View } from './camera.js';
 import { downgrade, useQuality, type Quality } from './quality.js';
 import { Critters } from './Critters.js';
-import { q, toUv, useLayout, woodPath, type Layout } from './layout.js';
+import { q, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Placed } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
 import { clamp, fbm, hashSeed } from './noise.js';
 import { InstancedParts } from './parts.js';
@@ -31,6 +31,8 @@ export interface Terrarium3DProps {
   label?: string;
   /** When given, plants can be dragged across the soil; called with the plant id and its new u, v. */
   onArrange?: (plantId: string, at: [number, number]) => void;
+  /** Lets the wood and stone be dragged, and the wood turned with a tap (3D only). */
+  onPlace?: (what: 'wood' | 'stone', placed: Placed) => void;
   /** Straight-on portrait (default) or a raised, near-isometric corner view. */
   view?: View;
   /** Part of the jar to frame (iso view): the whole jar, its layers, the plants, the crew, or the room and its light. */
@@ -44,18 +46,18 @@ export interface Terrarium3DProps {
  * and brown with health, the crew moves, mold spreads, and the lights follow
  * the photoperiod.
  */
-export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, view = 'front', focus = 'all' }: Terrarium3DProps) {
+export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, onPlace, view = 'front', focus = 'all' }: Terrarium3DProps) {
   const bg = useCssColor('--bg');
   const quality = useQuality();
   // One per jar view, kept across re-renders: how the jar is being handled.
   const motion = useMemo(newMotion, []);
   return (
-    <div className={`jar3d${onArrange ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name} data-quality={quality}>
+    <div className={`jar3d${onArrange || onPlace ? ' arranging' : ''}${className ? ` ${className}` : ''}`} role="img" aria-label={label ?? spec.name} data-quality={quality}>
       {/* Keyed by quality: stepping down rebuilds the renderer without shadows and at a lower pixel density. */}
       <Canvas key={quality} shadows={quality === 'high'} dpr={quality === 'high' ? [1, 2] : [1, 1.5]}
         camera={{ position: [0, 1.4, 5.2], fov: 30, near: 0.1, far: 50 }} gl={{ antialias: true, toneMappingExposure: 1.08 }}>
         <color attach="background" args={[bg]} />
-        <JarScene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} motion={motion} autoRotate={autoRotate} view={view} focus={focus} quality={quality} />
+        <JarScene spec={spec} state={state} lively={lively} wall={bg} onArrange={onArrange} onPlace={onPlace} motion={motion} autoRotate={autoRotate} view={view} focus={focus} quality={quality} />
         {quality === 'high' && <FrameRateWatch />}
       </Canvas>
     </div>
@@ -81,8 +83,8 @@ function useCssColor(name: string) {
  * bare) the room and shelf around it. Bare scenes are for stills: just the jar and its
  * shadow on a transparent background, to sit on a page.
  */
-export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRotate, view, focus, bare = false, quality = 'high' }: {
-  spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange'];
+export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion, autoRotate, view, focus, bare = false, quality = 'high' }: {
+  spec: TerrariumSpec; state: TerrariumState; lively: boolean; wall: string; onArrange?: Terrarium3DProps['onArrange']; onPlace?: Terrarium3DProps['onPlace'];
   motion: Motion; autoRotate: boolean; view: View; focus: Focus; bare?: boolean; quality?: Quality;
 }) {
   const L = useLayout(spec);
@@ -107,9 +109,9 @@ export function JarScene({ spec, state, lively, wall, onArrange, motion, autoRot
 
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
         <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
-        <Hardscape L={L} spec={spec} />
+        <Hardscape L={L} spec={spec} onPlace={onPlace} />
         <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} onArrange={onArrange} />
-        <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} />
+        <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} wood={spec.placed?.wood} />
         <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
         <Mold L={L} amount={q(mold, 0.05)} />
         <Critters L={L} state={state} lively={lively} quality={quality} />
@@ -523,22 +525,60 @@ function Drainage({ shape, y0, y1, kind }: { shape: Shape; y0: number; y1: numbe
 
 // ------------------------------------------------------------------ hardscape
 
-function Hardscape({ L, spec }: { L: Layout; spec: TerrariumSpec }) {
+/**
+ * Pointer to a point on the soil, for dragging things across it. The ray is in world
+ * space; the floor is in the jar's own (spun, rocked) space, so it goes through the group.
+ */
+function useFloorPointer(L: Layout) {
+  const group = useRef<THREE.Group>(null);
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), -L.gy), [L.gy]);
+  const hit = useMemo(() => new THREE.Vector3(), []);
+  const at = (e: ThreeEvent<PointerEvent>) => {
+    if (!group.current) return null;
+    const local = e.ray.clone().applyMatrix4(group.current.matrixWorld.clone().invert());
+    if (!local.intersectPlane(plane, hit)) return null;
+    const [x, z] = pointIn(L.groundFp, ...toUv(L.groundFp, hit.x, hit.z));
+    return { x, z };
+  };
+  return { group, at };
+}
+
+/** A ring on the soil under whatever is being dragged. */
+function DropRing({ L, x, z, r = 0.13 }: { L: Layout; x: number; z: number; r?: number }) {
+  return (
+    <mesh position={[x, L.ground.heightAt(x, z) + 0.01, z]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[r, r + 0.03, 40]} />
+      <meshBasicMaterial color="#8cc497" transparent opacity={0.85} depthWrite={false} />
+    </mesh>
+  );
+}
+
+const WOOD_TURN = Math.PI / 4;
+
+function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPlace?: Terrarium3DProps['onPlace'] }) {
   const { groundFp } = L;
   const R = groundFp.kind === 'circle' ? groundFp.r : Math.min(groundFp.hx, groundFp.hz) * 1.1;
-  const wood = useMemo(() => {
-    if (!spec.hardscape.includes('wood')) return null;
-    const w = woodPath(L);
-    const trunk = taperedTube(w.trunk, w.r0, w.r1, 32, 10);
-    const branch = taperedTube(w.branch, 0.045, 0.014, 16, 8);
+  const woodPlaced = spec.placed?.wood;
+  const woodMat = useMemo(() => {
     const map = barkTexture().clone();
     map.repeat.set(3, 1);
     map.needsUpdate = true;
-    const mat = new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.88 });
-    return { trunk, branch, mat };
-  }, [spec.hardscape, L]);
-  const stone = useMemo(() => {
-    if (!spec.hardscape.includes('stone')) return null;
+    return new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.88 });
+  }, []);
+  const wood = useMemo(() => {
+    if (!spec.hardscape.includes('wood')) return null;
+    const w = woodPath(L, woodPlaced);
+    const trunk = taperedTube(w.trunk, w.r0, w.r1, 32, 10);
+    const branch = taperedTube(w.branch, 0.045, 0.014, 16, 8);
+    // Where it really ended up (it is pulled back from the glass), for dragging from there.
+    const mid = w.trunk.reduce((m, p) => m.add(p), new THREE.Vector3()).divideScalar(w.trunk.length);
+    return { trunk, branch, x: mid.x, z: mid.z };
+  }, [spec.hardscape, L, woodPlaced]);
+  useEffect(() => () => {
+    wood?.trunk.dispose();
+    wood?.branch.dispose();
+  }, [wood]);
+  const stoneShape = useMemo(() => {
     const g = new THREE.IcosahedronGeometry(1, 4);
     const pos = g.attributes.position as THREE.BufferAttribute;
     const v = new THREE.Vector3();
@@ -549,23 +589,82 @@ function Hardscape({ L, spec }: { L: Layout; spec: TerrariumSpec }) {
       pos.setXYZ(i, v.x, v.y, v.z);
     }
     g.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ color: '#8e938c', roughness: 0.82, bumpMap: lumpTexture(), bumpScale: 5 });
+    return { g, mat: new THREE.MeshStandardMaterial({ color: '#8e938c', roughness: 0.82, bumpMap: lumpTexture(), bumpScale: 5 }) };
+  }, []);
+  const stonePlaced = spec.placed?.stone;
+  const stone = useMemo(() => {
+    if (!spec.hardscape.includes('stone')) return null;
     const s = 0.24 * Math.min(1, R);
-    const [x, z] = pointIn(groundFp, 0.55, 0.05);
-    return { g, mat, s, x, z, y: L.ground.heightAt(x, z) };
-  }, [spec.hardscape, groundFp, R, L.ground]);
+    const [x, z] = stoneSpot(L, stonePlaced);
+    return { s, x, z, y: L.ground.heightAt(x, z) };
+  }, [spec.hardscape, R, L, stonePlaced]);
+
+  // Dragging: the piece follows the pointer and is rebuilt in its new spot once dropped.
+  const motion = useMotion();
+  const floor = useFloorPointer(L);
+  type Drag = { what: 'wood' | 'stone'; from: { x: number; z: number }; dx: number; dz: number };
+  const [drag, setDragState] = useState<Drag | null>(null);
+  // Read by the handlers, which can run (a quick tap) before React has re-rendered.
+  const live = useRef<Drag | null>(null);
+  const setDrag = (d: Drag | null) => {
+    live.current = d;
+    setDragState(d);
+  };
+  const handlers = (what: 'wood' | 'stone') => onPlace && {
+    onPointerDown: (e: ThreeEvent<PointerEvent>) => {
+      const from = floor.at(e);
+      if (!from) return;
+      e.stopPropagation();
+      (e.target as unknown as Element).setPointerCapture(e.pointerId);
+      motion.locked = true;
+      setDrag({ what, from, dx: 0, dz: 0 });
+    },
+    onPointerMove: (e: ThreeEvent<PointerEvent>) => {
+      const d = live.current;
+      if (d?.what !== what) return;
+      const p = floor.at(e);
+      if (p) setDrag({ ...d, dx: p.x - d.from.x, dz: p.z - d.from.z });
+    },
+    onPointerUp: (e: ThreeEvent<PointerEvent>) => {
+      (e.target as unknown as Element).releasePointerCapture(e.pointerId);
+      motion.locked = false;
+      const drag = live.current;
+      if (drag?.what === what) {
+        const moved = Math.hypot(drag.dx, drag.dz) > 0.02;
+        if (what === 'wood' && wood) {
+          const turn = woodPlaced?.turn ?? 0;
+          // A tap turns the log; a drag moves it.
+          if (moved) onPlace('wood', { at: toUv(groundFp, wood.x + drag.dx, wood.z + drag.dz), turn });
+          else onPlace('wood', { at: woodPlaced?.at ?? woodHome(L), turn: (turn + WOOD_TURN) % (Math.PI * 2) });
+        }
+        if (what === 'stone' && stone && moved) onPlace('stone', { at: toUv(groundFp, stone.x + drag.dx, stone.z + drag.dz) });
+      }
+      setDrag(null);
+    },
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => {
+      e.stopPropagation();
+      document.body.style.cursor = 'grab';
+    },
+    onPointerOut: () => {
+      document.body.style.cursor = '';
+    },
+  };
+  const offset = (what: 'wood' | 'stone'): [number, number, number] => (drag?.what === what ? [drag.dx, 0.03, drag.dz] : [0, 0, 0]);
 
   return (
-    <group>
+    <group ref={floor.group}>
       {wood && (
-        <>
-          <mesh geometry={wood.trunk} material={wood.mat} castShadow receiveShadow />
-          <mesh geometry={wood.branch} material={wood.mat} castShadow receiveShadow />
-        </>
+        <group position={offset('wood')} {...handlers('wood')}>
+          <mesh geometry={wood.trunk} material={woodMat} castShadow receiveShadow />
+          <mesh geometry={wood.branch} material={woodMat} castShadow receiveShadow />
+        </group>
       )}
       {stone && (
-        <mesh geometry={stone.g} material={stone.mat} position={[stone.x, stone.y + stone.s * 0.15, stone.z]} scale={[stone.s * 1.15, stone.s * 0.72, stone.s * 0.95]} rotation={[0.1, 0.6, 0]} castShadow receiveShadow />
+        <mesh geometry={stoneShape.g} material={stoneShape.mat} position={[stone.x + offset('stone')[0], stone.y + stone.s * 0.15 + offset('stone')[1], stone.z + offset('stone')[2]]}
+          scale={[stone.s * 1.15, stone.s * 0.72, stone.s * 0.95]} rotation={[0.1, 0.6, 0]} castShadow receiveShadow {...handlers('stone')} />
       )}
+      {drag?.what === 'wood' && wood && <DropRing L={L} x={wood.x + drag.dx} z={wood.z + drag.dz} r={0.22} />}
+      {drag?.what === 'stone' && stone && <DropRing L={L} x={stone.x + drag.dx} z={stone.z + drag.dz} r={stone.s * 1.1} />}
     </group>
   );
 }
@@ -594,17 +693,7 @@ function Plants({ L, spec, state, dry, onArrange }: {
     const t = setTimeout(() => setPicked(null), 4500);
     return () => clearTimeout(t);
   }, [picked]);
-  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), -L.gy), [L.gy]);
-  const hit = useMemo(() => new THREE.Vector3(), []);
-  const group = useRef<THREE.Group>(null);
-  const follow = (e: ThreeEvent<PointerEvent>) => {
-    if (!group.current) return null;
-    // The ray is in world space; the floor plane is in the jar's own (spun, rocked) space.
-    const local = e.ray.clone().applyMatrix4(group.current.matrixWorld.clone().invert());
-    if (!local.intersectPlane(plane, hit)) return null;
-    const [x, z] = pointIn(L.groundFp, ...toUv(L.groundFp, hit.x, hit.z));
-    return { x, z };
-  };
+  const floor = useFloorPointer(L);
   const dragHandlers = (id: string): Handlers | undefined => onArrange && {
     onPointerDown: (e) => {
       e.stopPropagation();
@@ -615,7 +704,7 @@ function Plants({ L, spec, state, dry, onArrange }: {
     },
     onPointerMove: (e) => {
       if (drag?.id !== id) return;
-      const p = follow(e);
+      const p = floor.at(e);
       if (p) setDrag({ id, ...p });
     },
     onPointerUp: (e) => {
@@ -630,7 +719,7 @@ function Plants({ L, spec, state, dry, onArrange }: {
   };
 
   return (
-    <group ref={group}>
+    <group ref={floor.group}>
       {state.plants.map((pl) => {
         const [x, z] = places.get(pl.id) ?? [0, 0];
         const live = drag?.id === pl.id ? drag : null;
@@ -643,12 +732,7 @@ function Plants({ L, spec, state, dry, onArrange }: {
           />
         );
       })}
-      {drag && (
-        <mesh position={[drag.x, L.ground.heightAt(drag.x, drag.z) + 0.01, drag.z]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.13, 0.16, 40]} />
-          <meshBasicMaterial color="#8cc497" transparent opacity={0.85} depthWrite={false} />
-        </mesh>
-      )}
+      {drag && <DropRing L={L} x={drag.x} z={drag.z} />}
       {picked && !drag && (() => {
         const pl = state.plants.find((p) => p.id === picked);
         const at = places.get(picked);

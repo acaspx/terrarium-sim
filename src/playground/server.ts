@@ -5,9 +5,12 @@
  *   GET    /api/keepers?name=NAME                        a keeper's profile
  *   POST   /api/keepers                                  claim { name } -> { name, key }
  *   POST   /api/keepers?action=verify                    sign in on another device { name, key }
+ *   GET    /api/keepers?action=following                 who you follow                    (keeper only)
+ *   POST   /api/keepers?action=follow|unfollow           { name }                          (keeper only)
  *
  *   GET    /api/terrariums?sort=recent|liked&cursor=N    a page of the community shelf
  *   GET    /api/terrariums?keeper=NAME&cursor=N          one keeper's shelf
+ *   GET    /api/terrariums?feed=following&cursor=N       jars from keepers you follow      (keeper only)
  *   GET    /api/terrariums?id=ID                         one terrarium
  *   POST   /api/terrariums                               share { spec, state, note? }      (keeper only)
  *   POST   /api/terrariums?id=ID&action=like|report      { voter }                         (anyone)
@@ -44,6 +47,13 @@ export interface PlaygroundStore {
   /** False if the name is already taken. */
   createKeeper(k: Keeper): Promise<boolean>;
   getKeeper(name: string): Promise<Keeper | null>;
+  follow(follower: string, name: string): Promise<void>;
+  unfollow(follower: string, name: string): Promise<void>;
+  /** Who this keeper follows. */
+  following(name: string): Promise<string[]>;
+  followerCount(name: string): Promise<number>;
+  /** The newest jars shared by any of these keepers. */
+  feed(names: string[], offset: number, limit: number): Promise<Submission[]>;
   /** True if the caller is still under `limit` calls in this window. */
   allow(key: string, limit: number, windowS: number): Promise<boolean>;
 }
@@ -54,6 +64,9 @@ const MAX_BODY = 256 * 1024;
 const SUBMITS_PER_HOUR = 6;
 const KEEPERS_PER_HOUR = 5;
 const REPORTS_TO_HIDE = 3;
+/** Keeps the following feed a bounded merge of shelves. */
+export const MAX_FOLLOWING = 200;
+const FOLLOWS_PER_HOUR = 120;
 
 // ------------------------------------------------------------------ redis
 
@@ -128,6 +141,35 @@ export async function redisStore(url: string, token: string): Promise<Playground
     async getKeeper(name) {
       return r.get<Keeper>(`tr:keeper:${name}`);
     },
+    async follow(follower, name) {
+      const p = r.pipeline();
+      p.sadd(`tr:following:${follower}`, name);
+      p.sadd(`tr:followers:${name}`, follower);
+      await p.exec();
+    },
+    async unfollow(follower, name) {
+      const p = r.pipeline();
+      p.srem(`tr:following:${follower}`, name);
+      p.srem(`tr:followers:${name}`, follower);
+      await p.exec();
+    },
+    async following(name) {
+      return (await r.smembers(`tr:following:${name}`)).sort();
+    },
+    async followerCount(name) {
+      return r.scard(`tr:followers:${name}`);
+    },
+    async feed(names, offset, limit) {
+      if (names.length === 0) return [];
+      // The newest offset+limit of each shelf is enough to find the newest offset+limit overall.
+      const p = r.pipeline();
+      for (const n of names) p.zrange(by(n), 0, offset + limit - 1, { rev: true, withScores: true });
+      const shelves = (await p.exec()) as (string | number)[][];
+      const all: { id: string; at: number }[] = [];
+      for (const flat of shelves) for (let i = 0; i + 1 < flat.length; i += 2) all.push({ id: String(flat[i]), at: Number(flat[i + 1]) });
+      all.sort((a, b) => b.at - a.at);
+      return fetch(all.slice(offset, offset + limit).map((e) => e.id));
+    },
     async allow(key, limit, windowS) {
       const k = `tr:rl:${key}:${Math.floor(Date.now() / 1000 / windowS)}`;
       const n = await r.incr(k);
@@ -144,6 +186,7 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
   const items = new Map<string, { sub: Submission; voters: Set<string>; reports: Set<string>; hidden: boolean }>();
   const keepers = new Map<string, Keeper>();
   const counters = new Map<string, number>();
+  const follows = new Map<string, Set<string>>();
   for (const k of seed.keepers ?? []) keepers.set(k.name, k);
   for (const s of seed.subs ?? []) items.set(s.id, { sub: s, voters: new Set(), reports: new Set(), hidden: false });
   const view = (e: { sub: Submission; voters: Set<string> }) => ({ ...e.sub, likes: e.sub.likes + e.voters.size });
@@ -193,6 +236,22 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
     },
     async getKeeper(name) {
       return keepers.get(name) ?? null;
+    },
+    async follow(follower, name) {
+      follows.set(follower, (follows.get(follower) ?? new Set()).add(name));
+    },
+    async unfollow(follower, name) {
+      follows.get(follower)?.delete(name);
+    },
+    async following(name) {
+      return [...(follows.get(name) ?? [])].sort();
+    },
+    async followerCount(name) {
+      return [...follows.values()].filter((f) => f.has(name)).length;
+    },
+    async feed(names, offset, limit) {
+      const set = new Set(names);
+      return visible().filter((s) => set.has(s.keeper)).sort((a, b) => b.createdAt - a.createdAt).slice(offset, offset + limit);
     },
     async allow(key, limit, windowS) {
       const k = `${key}:${Math.floor(Date.now() / 1000 / windowS)}`;
@@ -278,15 +337,38 @@ async function readJson(req: Request): Promise<Record<string, unknown>> {
 
 async function keepers(req: Request, url: URL, store: PlaygroundStore): Promise<Response> {
   if (req.method === 'GET') {
+    if (url.searchParams.get('action') === 'following') {
+      const me = await fromHeaders(store, req);
+      return me ? json({ names: await store.following(me) }) : problem(401, 'Sign in to see who you follow.');
+    }
     const name = normaliseName(url.searchParams.get('name'));
     const k = name ? await store.getKeeper(name) : null;
     if (!k) return problem(404, 'There is no keeper by that name.');
-    return json({ name: k.name, createdAt: k.createdAt, count: await store.countByKeeper(k.name) });
+    const [count, followers] = await Promise.all([store.countByKeeper(k.name), store.followerCount(k.name)]);
+    return json({ name: k.name, createdAt: k.createdAt, count, followers });
   }
   if (req.method !== 'POST') return problem(405, 'Method not allowed.');
   const body = await readJson(req);
+  const action = url.searchParams.get('action');
 
-  if (url.searchParams.get('action') === 'verify') {
+  if (action === 'follow' || action === 'unfollow') {
+    const me = await fromHeaders(store, req);
+    if (!me) return problem(401, 'Pick a username first, or sign in with your recovery code.');
+    const name = normaliseName(body.name);
+    if (!(await store.allow(`follow:${me}`, FOLLOWS_PER_HOUR, 3600))) return problem(429, 'Slow down a little.');
+    if (action === 'unfollow') {
+      await store.unfollow(me, name);
+      return json({ following: false, followers: await store.followerCount(name) });
+    }
+    if (name === me) return problem(400, 'You cannot follow yourself.');
+    if (!(await store.getKeeper(name))) return problem(404, 'There is no keeper by that name.');
+    const already = await store.following(me);
+    if (!already.includes(name) && already.length >= MAX_FOLLOWING) return problem(400, `You can follow up to ${MAX_FOLLOWING} keepers.`);
+    await store.follow(me, name);
+    return json({ following: true, followers: await store.followerCount(name) });
+  }
+
+  if (action === 'verify') {
     if (!(await store.allow(`verify:${clientKey(req)}`, 30, 3600))) return problem(429, 'Too many tries. Wait a while and try again.');
     const name = await checkKeeper(store, body.name, body.key);
     return name ? json({ name }) : problem(401, 'That name and recovery code do not match.');
@@ -302,6 +384,12 @@ async function keepers(req: Request, url: URL, store: PlaygroundStore): Promise<
   return json({ name, key }, 201);
 }
 
+/** A page of a list. Lists leave the time-lapse frames out; opening one jar fetches them. */
+function listing(page: Submission[], offset: number) {
+  const items = page.map(({ frames, ...s }) => ({ ...s, frameCount: s.frameCount ?? frames?.length ?? 0 }));
+  return { items, next: items.length === PAGE ? offset + PAGE : null };
+}
+
 async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promise<Response> {
   const id = url.searchParams.get('id');
   if (id !== null && !ID.test(id)) return problem(400, 'Bad id.');
@@ -312,13 +400,17 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promi
       return s ? json(s) : problem(404, 'That terrarium is no longer on the shelf.');
     }
     const offset = Math.max(0, Math.min(10_000, Number(url.searchParams.get('cursor')) || 0));
+    if (url.searchParams.get('feed') === 'following') {
+      const me = await fromHeaders(store, req);
+      if (!me) return problem(401, 'Sign in to see jars from keepers you follow.');
+      // Personal, so never cached by anything in between.
+      return json(listing(await store.feed(await store.following(me), offset, PAGE), offset));
+    }
     const keeper = normaliseName(url.searchParams.get('keeper'));
     const page = keeper
       ? await store.listByKeeper(keeper, offset, PAGE)
       : await store.list(url.searchParams.get('sort') === 'liked' ? 'liked' : 'recent', offset, PAGE);
-    // Lists leave the time-lapse frames out; opening one jar fetches them.
-    const items = page.map(({ frames, ...s }) => ({ ...s, frameCount: s.frameCount ?? frames?.length ?? 0 }));
-    return json({ items, next: items.length === PAGE ? offset + PAGE : null }, 200, { 'cache-control': 'public, max-age=10, stale-while-revalidate=60' });
+    return json(listing(page, offset), 200, { 'cache-control': 'public, max-age=10, stale-while-revalidate=60' });
   }
 
   if (req.method === 'POST' && !id) {

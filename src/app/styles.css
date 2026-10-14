@@ -531,3 +531,44 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   /* The pinned panel stays short on phones: the day is in the page itself. */
   .workbench-page .workbench-view .jar-caption { display: none; }
 }
+
+/* ------------------------------------------------------------------ inbox */
+.topbar-tools { display: flex; align-items: center; gap: 10px; }
+.inbox { position: relative; }
+.inbox-button { position: relative; width: 38px; height: 38px; border-radius: 10px; }
+.inbox-count {
+  position: absolute; top: -6px; right: -6px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
+  display: grid; place-items: center; font: 700 11px/1 var(--font-body); background: var(--rust); color: #fff; box-shadow: 0 0 0 2px var(--bg);
+}
+.inbox-panel {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 32px));
+  max-height: min(70vh, 560px); display: flex; flex-direction: column;
+  background: var(--tag); border: 1px solid var(--rule); border-radius: 12px; box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.35);
+  animation: chip-in 0.15s ease-out;
+}
+.inbox-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 14px 8px; }
+.inbox-head .button { padding: 4px 6px; font-size: 13px; }
+.inbox-list { list-style: none; margin: 0; padding: 0 6px; overflow-y: auto; }
+.inbox-item { display: grid; grid-template-columns: 18px 1fr; gap: 10px; padding: 9px 8px; border-radius: 8px; text-decoration: none; color: var(--ink); }
+.inbox-item:hover, .inbox-item:focus-visible { background: var(--surface); }
+.inbox-item svg { margin-top: 2px; color: var(--muted); }
+.inbox-item.kind-alert svg { color: var(--amber); }
+.inbox-item.kind-plant-death svg, .inbox-item.kind-extinction svg, .inbox-item.kind-invasion svg { color: var(--rust); }
+.inbox-item.kind-mushrooms svg, .inbox-item.kind-recovery svg { color: var(--moss); }
+.inbox-jar { display: block; font-size: 12px; color: var(--muted); }
+.inbox-msg { display: block; font-size: 14px; line-height: 1.35; }
+.inbox-empty { padding: 4px 14px 10px; }
+.inbox-foot { display: grid; gap: 6px; padding: 10px 14px 12px; border-top: 1px solid var(--rule); }
+.inbox-foot .saved-check { margin: 0; }
+.inbox-foot .hint { font-size: 12px; }
+@media (max-width: 640px) {
+  .topbar-tools { width: 100%; justify-content: space-between; }
+  .inbox-panel { right: auto; left: 0; }
+}
+
+/* ------------------------------------------------------------------ following */
+.keeper-title { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.follow-wrap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.button.follow { gap: 6px; }
+.following-list h2 { font-size: 18px; margin-bottom: 8px; }
+.following-list ul { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; padding: 0; }

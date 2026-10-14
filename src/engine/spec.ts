@@ -35,6 +35,11 @@ export interface TerrariumSpec {
   substrate: SubstrateId;
   depth: DepthId;
   hardscape: HardscapeId[];
+  /**
+   * Where the keeper moved the wood and stone, u and v as for plants, and how far the wood
+   * is turned (radians). Only for the picture: the simulation does not model where they sit.
+   */
+  placed?: { wood?: { at: [number, number]; turn?: number }; stone?: { at: [number, number] } };
   /** `at` is where it is planted, u and v in [-1, 1]; left out, the layout is automatic. */
   plants: { speciesId: string; size: PlantSizeId; at?: [number, number] }[];
   fauna: { speciesId: string; count: number }[];

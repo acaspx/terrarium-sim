@@ -3,7 +3,7 @@ import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { isTap, nudge, useMotion } from './rig.js';
 import { makeRng } from '../../engine/core/math.js';
-import { woodPath, type Layout } from './layout.js';
+import { woodPath, type Layout, type Placed } from './layout.js';
 import { InstancedParts, type Item } from './parts.js';
 
 const STEM = new THREE.CylinderGeometry(0.005, 0.008, 0.09, 8).translate(0, 0.045, 0);
@@ -14,12 +14,12 @@ const CAP = new THREE.LatheGeometry(
 const CAP_COLORS = ['#b98d5c', '#a87a4a', '#c9a274', '#9c6f45'];
 
 /** A flush of small brown mushrooms on the driftwood and the soil beside it. */
-export function Mushrooms({ L, amount, seed }: { L: Layout; amount: number; seed: number }) {
+export function Mushrooms({ L, amount, seed, wood }: { L: Layout; amount: number; seed: number; wood?: Placed }) {
   const { stems, caps, center } = useMemo(() => {
     const stems: Item[] = [];
     const caps: Item[] = [];
     const n = amount <= 0 ? 0 : Math.min(14, Math.ceil(amount * 30));
-    const w = woodPath(L);
+    const w = woodPath(L, wood);
     const curve = new THREE.CatmullRomCurve3(w.trunk);
     const r = makeRng(seed + 77);
     const scale = (1.7 * L.k) / 2.8;
@@ -46,7 +46,7 @@ export function Mushrooms({ L, amount, seed }: { L: Layout; amount: number; seed
     if (caps.length) center.divideScalar(caps.length);
     center.y = L.gy;
     return { stems, caps, center };
-  }, [L, amount, seed]);
+  }, [L, amount, seed, wood]);
   const stemMat = useMemo(() => new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 }), []);
   const capMat = useMemo(() => new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.45, sheen: 0.5, sheenColor: new THREE.Color('#f0dcc0'), side: THREE.DoubleSide }), []);
 

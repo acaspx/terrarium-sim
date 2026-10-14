@@ -65,7 +65,10 @@ export function Builder() {
     const i = Number(plantId.slice(plantId.lastIndexOf('-') + 1)) - 1;
     if (spec.plants[i]) update({ plants: spec.plants.map((p, j) => (j === i ? { ...p, at } : p)) });
   };
-  const placed = spec.plants.some((p) => p.at);
+  // Wood and stone are only for the picture; the simulation does not model where they sit.
+  const place = (what: 'wood' | 'stone', at: { at: [number, number]; turn?: number }) => update({ placed: { ...spec.placed, [what]: at } });
+  const movable = spec.hardscape.filter((h) => h === 'wood' || h === 'stone');
+  const placed = spec.plants.some((p) => p.at) || !!spec.placed;
   const focus: Focus = arranging ? 'plants' : stepFocus;
   const issues = useMemo(() => checkSpec(spec), [spec]);
   const issuesFor = (target: string) => issues.filter((i) => i.target === target);
@@ -287,28 +290,33 @@ export function Builder() {
         <aside className="builder-preview workbench-view" aria-label="Preview">
           <div className="stage-3d">
             <Jar3D spec={spec} state={shown} title={`Preview of ${spec.name}, day ${arranging ? 0 : previewDay}`}
-              onArrange={arranging ? arrange : undefined} view="iso" focus={focus} />
+              onArrange={arranging ? arrange : undefined} onPlace={arranging ? place : undefined} view="iso" focus={focus} />
             <span className="stage-focus" aria-live="polite">{FOCUS_LABEL[focus]}</span>
             <button type="button" className={`stage-score${deferred !== spec ? ' stale' : ''}`} onClick={() => document.getElementById('fc')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
               title="See the 90-day forecast">
               Day {fc.days} health <span className={`score score-${scoreTone(fc.finalScore)}`}>{fc.finalScore}</span>
             </button>
             {/* Keyed so a new message shows (and fades) again. */}
-            <span className="stage-hint" key={arranging ? 'arrange' : 'spin'}>{arranging ? 'Drag a plant to move it. Drag elsewhere to spin the jar.' : 'Drag to spin. Tap plants, soil and glass.'}</span>
+            <span className="stage-hint" key={arranging ? 'arrange' : 'spin'}>{arranging
+              ? `Drag ${movable.length ? 'plants, wood or stone' : 'a plant'} to move ${movable.length ? 'them' : 'it'}.${movable.includes('wood') ? ' Tap the wood to turn it.' : ''} Drag elsewhere to spin the jar.`
+              : 'Drag to spin. Tap plants, soil and glass.'}</span>
           </div>
           <div className="preview-bar">
             <button type="button" className={`button${arranging ? ' primary' : ''}`} aria-pressed={arranging}
-              onClick={() => setArranging((a) => !a)} disabled={spec.plants.length === 0}>
-              <Move size={16} aria-hidden="true" /> {arranging ? 'Done arranging' : 'Arrange plants'}
+              onClick={() => setArranging((a) => !a)} disabled={spec.plants.length === 0 && movable.length === 0}>
+              <Move size={16} aria-hidden="true" /> {arranging ? 'Done arranging' : 'Arrange'}
             </button>
             {arranging ? (
               <>
                 {placed && (
-                  <button type="button" className="button quiet" onClick={() => update({ plants: spec.plants.map(({ at: _at, ...p }) => p) })}>
+                  <button type="button" className="button quiet" onClick={() => update({ plants: spec.plants.map(({ at: _at, ...p }) => p), placed: undefined })}>
                     Reset layout
                   </button>
                 )}
-                <p className="hint arrange-hint">Tall plants shade whatever grows close beneath them. In dim light that slows it down.</p>
+                <p className="hint arrange-hint">
+                  Tall plants shade whatever grows close beneath them. In dim light that slows it down.
+                  {movable.length > 0 && ' Where the wood and stone sit is only for the look: the simulation does not model it.'}
+                </p>
               </>
             ) : (
               <Segmented<number> label="Preview day" size="sm" value={previewDay} onChange={setPreviewDay}

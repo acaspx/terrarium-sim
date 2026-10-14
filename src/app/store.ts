@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   alerts, buildTerrarium, care, frameDue, geometry, healthScore, recordFrame, RECIPES, step, toFrame,
-  type Frame, type TerrariumSpec, type TerrariumState,
+  type Frame, type SimEvent, type TerrariumSpec, type TerrariumState,
 } from '../engine/index.js';
 
 /** How fast simulated time runs. "live" is real time: one simulated hour per real hour. */
@@ -75,7 +75,31 @@ function dayPoint(s: TerrariumState): DayPoint {
 }
 
 /** One simulated hour, plus the bookkeeping the interface needs (daily history, alert changes). */
+/** Events worth telling the keeper about as they happen (care actions and recoveries are not). */
+export const NEWSWORTHY = new Set(['alert', 'plant-death', 'mushrooms', 'invasion', 'extinction']);
+
+type NewsListener = (j: JarRecord, events: SimEvent[]) => void;
+const newsListeners = new Set<NewsListener>();
+/** Called with each jar's newsworthy events as the simulation produces them. */
+export function onNews(fn: NewsListener): () => void {
+  newsListeners.add(fn);
+  return () => {
+    newsListeners.delete(fn);
+  };
+}
+
 function stepJar(j: JarRecord): void {
+  const s = j.state;
+  // The journal is trimmed from the front when it grows long, so find what is new by
+  // the last event seen rather than by counting.
+  const last = s.events[s.events.length - 1];
+  stepJarInner(j);
+  if (newsListeners.size === 0 || s.events[s.events.length - 1] === last) return;
+  const fresh = s.events.slice(last ? s.events.indexOf(last) + 1 : 0).filter((e) => NEWSWORTHY.has(e.type));
+  if (fresh.length) for (const fn of newsListeners) fn(j, fresh);
+}
+
+function stepJarInner(j: JarRecord): void {
   const s = j.state;
   step(s);
   if (frameDue(s)) j.frames = recordFrame(j.frames ?? [], toFrame(s));
@@ -171,8 +195,8 @@ class Store {
 
   /** Advance every jar by the simulated time that corresponds to `dtMs` of real time. */
   tick(dtMs: number) {
-    // Fast-forward should not leap ahead after the tab was in the background.
-    if (this.speed !== 'live') dtMs = Math.min(dtMs, 250);
+    // Fast-forward should not leap ahead after a stall. A background tab ticks about once a second.
+    if (this.speed !== 'live') dtMs = Math.min(dtMs, typeof document !== 'undefined' && document.hidden ? 1000 : 250);
     const hours = HOURS_PER_SECOND[this.speed] * (dtMs / 1000);
     let changed = false;
     for (const j of this.jars) {
@@ -259,19 +283,31 @@ export function unseenEvents(j: JarRecord) {
 export function startClock() {
   let last = performance.now();
   let raf = 0;
-  const loop = (t: number) => {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const advance = (t: number) => {
     store.tick(t - last);
     last = t;
+  };
+  const loop = (t: number) => {
+    advance(t);
     raf = requestAnimationFrame(loop);
   };
   raf = requestAnimationFrame(loop);
+  // Animation frames stop in a background tab; a timer keeps the jars growing (and their news coming).
   const onHide = () => {
-    if (document.visibilityState === 'hidden') store.save();
+    if (document.visibilityState === 'hidden') {
+      store.save();
+      timer ??= setInterval(() => advance(performance.now()), 1000);
+    } else if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
   };
   document.addEventListener('visibilitychange', onHide);
   window.addEventListener('pagehide', store.save);
   return () => {
     cancelAnimationFrame(raf);
+    if (timer) clearInterval(timer);
     document.removeEventListener('visibilitychange', onHide);
     window.removeEventListener('pagehide', store.save);
   };
