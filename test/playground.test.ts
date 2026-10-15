@@ -301,6 +301,8 @@ describe('link previews', () => {
     expect(html).toContain('content="Ferns &#38; &#60;moss&#62;"');
     expect(html).toContain(`content="https://terrarium.example/api/terrariums?id=${item.id}&#38;card=1"`);
     expect(html).toContain(`/#/community/${item.id}`);
+    // As Vercel delivers it after the rewrite: the original path.
+    expect(await (await handle(new Request(`http://x/s/${item.id}`), store)).text()).toContain(`by @ana`);
     // Without storage it still opens the app.
     expect(await (await handle(new Request('http://x/api/share?id=nope'), null)).text()).toContain('/#/community');
   });
