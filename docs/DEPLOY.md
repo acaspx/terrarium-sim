@@ -21,6 +21,12 @@ connected.
 - [ ] Redeploy the preview after adding the variables. Environment variables
       only reach deployments built after they were set.
 
+- [ ] Optional: add `MODERATORS` (comma-separated usernames, e.g. `fern_keeper`)
+      for Production. Moderators see **Remove (moderator)** on any shared jar and
+      **Ban** on keepers' shelves. A ban removes all of that keeper's jars and stops
+      the name signing in. Claim your username on the site first, then list it here
+      and redeploy.
+
 Preview and production share one database unless you connect a second one.
 Fine for now; test shares from the preview will show up in production's
 gallery, so delete them (step 3) before you announce anything.

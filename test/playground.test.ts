@@ -229,8 +229,79 @@ describe('storage settings', () => {
   });
 
   it('explains the missing store in the error', async () => {
-    const res = await handle(new Request('http://x/api/terrariums'), null, 'Connect it.');
+    const res = await handle(new Request('http://x/api/terrariums'), null, { why: 'Connect it.' });
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ setup: 'Connect it.' });
+  });
+});
+
+describe('moderation', () => {
+  const mod = (store: Store, method: string, path: string, body: unknown, k: { name: string; key: string }, api = 'terrariums') =>
+    handle(new Request(`http://x/api/${api}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: as(k) }), store, { moderators: ['Mia'] });
+
+  it('lets a moderator remove any jar, and nobody else', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    const mia = await claim(store, 'mia');
+    const { item } = await (await share(store, ana)).json();
+    expect((await mod(store, 'DELETE', `?id=${item.id}`, undefined, bob)).status).toBe(403);
+    expect((await mod(store, 'DELETE', `?id=${item.id}`, undefined, mia)).status).toBe(200);
+    expect((await call(store, 'GET', `?id=${item.id}`)).status).toBe(404);
+  });
+
+  it('bans a keeper: their jars go, their name stays taken and cannot sign in', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const mia = await claim(store, 'mia');
+    await share(store, ana);
+    expect((await mod(store, 'POST', '?action=ban', { name: 'ana' }, ana, 'keepers')).status).toBe(403);
+    expect((await mod(store, 'POST', '?action=ban', { name: 'mia' }, mia, 'keepers')).status).toBe(400);
+    expect((await mod(store, 'POST', '?action=ban', { name: 'ana' }, mia, 'keepers')).status).toBe(200);
+    expect((await (await call(store, 'GET', '?sort=recent')).json()).items).toEqual([]);
+    expect((await share(store, ana)).status).toBe(401);
+    expect((await call(store, 'GET', '?name=ana', undefined, {}, 'keepers')).status).toBe(404);
+    expect((await claim(store, 'ana')).res.status).toBe(409);
+  });
+
+  it('tells a moderator they are one', async () => {
+    const store = memoryStore();
+    const mia = await claim(store, 'mia');
+    const ana = await claim(store, 'ana');
+    expect((await (await mod(store, 'GET', '?action=following', undefined, mia, 'keepers')).json()).moderator).toBe(true);
+    expect((await (await mod(store, 'GET', '?action=following', undefined, ana, 'keepers')).json()).moderator).toBe(false);
+  });
+});
+
+describe('link previews', () => {
+  const jpeg = 'data:image/jpeg;base64,' + btoa('\xff\xd8\xff fake jpeg');
+
+  it('stores a preview card from the jar\'s keeper only, and serves it as an image', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    const { item } = await (await share(store, ana)).json();
+    expect((await call(store, 'POST', `?id=${item.id}&action=card`, { image: jpeg }, as(bob))).status).toBe(403);
+    expect((await call(store, 'POST', `?id=${item.id}&action=card`, { image: 'data:image/png;base64,AAAA' }, as(ana))).status).toBe(400);
+    expect((await call(store, 'POST', `?id=${item.id}&action=card`, { image: jpeg }, as(ana))).status).toBe(200);
+    const img = await call(store, 'GET', `?id=${item.id}&card=1`);
+    expect(img.headers.get('content-type')).toBe('image/jpeg');
+    expect(new Uint8Array(await img.arrayBuffer()).slice(0, 3)).toEqual(new Uint8Array([0xff, 0xd8, 0xff]));
+  });
+
+  it('serves a page with preview tags that sends people on to the jar', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const { item } = await (await share(store, ana, { note: 'Ferns & <moss>' })).json();
+    await call(store, 'POST', `?id=${item.id}&action=card`, { image: jpeg }, as(ana));
+    const res = await handle(new Request(`http://x/api/share?id=${item.id}`, { headers: { 'x-forwarded-host': 'terrarium.example', 'x-forwarded-proto': 'https' } }), store);
+    const html = await res.text();
+    expect(res.headers.get('content-type')).toContain('text/html');
+    expect(html).toContain(`<meta property="og:title" content="${item.spec.name} by @ana">`);
+    expect(html).toContain('content="Ferns &#38; &#60;moss&#62;"');
+    expect(html).toContain(`content="https://terrarium.example/api/terrariums?id=${item.id}&#38;card=1"`);
+    expect(html).toContain(`/#/community/${item.id}`);
+    // Without storage it still opens the app.
+    expect(await (await handle(new Request('http://x/api/share?id=nope'), null)).text()).toContain('/#/community');
   });
 });

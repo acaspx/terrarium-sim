@@ -3,7 +3,7 @@ import { buildTerrarium, frameDue, recordFrame, RECIPES, step, toFrame, type Fra
 import { prepareSubmission, type Submission } from './schema.js';
 import { memoryStore, storeFromEnv, type Keeper } from './server.js';
 
-export { handle } from './server.js';
+export { handle, optionsFromEnv } from './server.js';
 
 /** A jar lived for some days, recording weekly frames as the app does, then shared some days ago. */
 function example(spec: TerrariumSpec, days: number, keeper: string, note: string, likes: number, i: number): Submission {
