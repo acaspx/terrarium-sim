@@ -97,7 +97,7 @@ export function signOut() {
 // ------------------------------------------------------------------ following
 
 /** Who the signed-in keeper follows; null until it has loaded (or when signed out). */
-let following: { owner: string; names: Set<string> } | null = null;
+let following: { owner: string; names: Set<string>; moderator: boolean } | null = null;
 let loadingFollows: string | null = null;
 const followListeners = new Set<() => void>();
 function setFollowing(next: typeof following) {
@@ -109,8 +109,8 @@ function loadFollowing() {
   const me = identity;
   if (!me || loadingFollows === me.name || following?.owner === me.name) return;
   loadingFollows = me.name;
-  request<{ names: string[] }>('keepers?action=following', { headers: auth() })
-    .then(({ names }) => identity?.name === me.name && setFollowing({ owner: me.name, names: new Set(names) }))
+  request<{ names: string[]; moderator?: boolean }>('keepers?action=following', { headers: auth() })
+    .then(({ names, moderator }) => identity?.name === me.name && setFollowing({ owner: me.name, names: new Set(names), moderator: !!moderator }))
     .catch(() => {
       // Follow buttons stay hidden until the list loads; the next visit tries again.
     })
@@ -121,6 +121,15 @@ function loadFollowing() {
 
 /** The keepers you follow, or null while signed out or still loading. */
 export function useFollowing(): Set<string> | null {
+  return useMine()?.names ?? null;
+}
+
+/** Whether the signed-in keeper is a moderator (listed in MODERATORS on the server). */
+export function useModerator(): boolean {
+  return useMine()?.moderator ?? false;
+}
+
+function useMine() {
   const me = useIdentity();
   const f = useSyncExternalStore(
     (fn) => {
@@ -134,7 +143,7 @@ export function useFollowing(): Set<string> | null {
     loadFollowing();
     return null;
   }
-  return f.names;
+  return f;
 }
 
 /** Follow or unfollow a keeper. Returns their new follower count. */
@@ -146,10 +155,18 @@ export async function setFollow(name: string, on: boolean): Promise<number> {
     const names = new Set(following.names);
     if (on) names.add(name);
     else names.delete(name);
-    setFollowing({ owner: identity.name, names });
+    setFollowing({ ...following, names });
   }
   return followers;
 }
+
+/** Moderators only: remove all of a keeper's jars and stop the name signing in. */
+export function ban(name: string) {
+  return request(`keepers?action=ban`, { method: 'POST', headers: auth(), body: JSON.stringify({ name }) });
+}
+
+/** The link to give people: it shows a preview in chat apps, then opens the jar. */
+export const shareLink = (id: string) => `${location.origin}/s/${id}`;
 
 export function listFollowingFeed(cursor = 0) {
   return request<{ items: Submission[]; next: number | null }>(`terrariums?feed=following&cursor=${cursor}`, { headers: auth() });
@@ -182,6 +199,11 @@ export async function share(j: JarRecord, note: string) {
   const from = readJson<Record<string, string>>(SHARED_KEY, {});
   from[item.id] = j.id;
   writeJson(SHARED_KEY, from);
+  // The link-preview picture follows in the background; a jar without one still shares.
+  void import('./shareCard.js')
+    .then((m) => m.shareCard(item.id, item.spec, item.state, item.keeper, item.day))
+    .then((image) => image && request(`terrariums?id=${item.id}&action=card`, { method: 'POST', headers: auth(), body: JSON.stringify({ image }) }))
+    .catch(() => {});
   return item;
 }
 

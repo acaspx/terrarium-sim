@@ -6,8 +6,8 @@ import {
 import { Jar3D } from '../jar/Jar3D.js';
 import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
 import {
-  getKeeper, getShared, hasLiked, like, listByKeeper, listFollowingFeed, listShared, plantCopy, report, setFollow, signOut, unshare,
-  useFollowing, useIdentity,
+  ban, getKeeper, getShared, hasLiked, like, listByKeeper, listFollowingFeed, listShared, plantCopy, report, setFollow, shareLink, signOut,
+  unshare, useFollowing, useIdentity, useModerator,
   type KeeperProfile, type Submission,
 } from '../playground.js';
 import { Segmented } from '../ui/controls.js';
@@ -200,6 +200,17 @@ export function KeeperShelf({ name }: { name: string }) {
     getKeeper(name).then(setProfile).catch((e: Error) => setMissing(e.message));
   }, [name]);
   const load = useCallback((cursor: number) => listByKeeper(name, cursor), [name]);
+  const moderator = useModerator();
+  const [confirmBan, setConfirmBan] = useState(false);
+  const [banError, setBanError] = useState<string | null>(null);
+  const onBan = async () => {
+    try {
+      await ban(name);
+      location.hash = '#/community';
+    } catch (e) {
+      setBanError((e as Error).message);
+    }
+  };
   const mine = me?.name === name;
   if (missing) {
     return (
@@ -226,6 +237,20 @@ export function KeeperShelf({ name }: { name: string }) {
         empty={mine
           ? <>Nothing here yet. Open a jar on <a href="#/">your shelf</a> and choose <strong>Share to community shelf</strong>.</>
           : <>@{name} has not shared anything yet.</>} />
+      {moderator && !mine && (
+        <section className="block manage">
+          {confirmBan ? (
+            <span className="confirm">
+              Ban @{name}? All their jars leave the shelf and the name can no longer sign in or share.
+              <button type="button" className="button danger" onClick={onBan}>Ban</button>
+              <button type="button" className="button quiet" onClick={() => setConfirmBan(false)}>Cancel</button>
+            </span>
+          ) : (
+            <button type="button" className="button quiet" onClick={() => setConfirmBan(true)}>Ban @{name} (moderator)</button>
+          )}
+          {banError && <span className="hint" role="alert">{banError}</span>}
+        </section>
+      )}
     </main>
   );
 }
@@ -305,6 +330,7 @@ export function KeeperPage() {
 
 export function SharedJar({ id }: { id: string }) {
   const me = useIdentity();
+  const moderator = useModerator();
   const [s, setS] = useState<Submission | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liked, setLiked] = useState(() => hasLiked(id));
@@ -338,6 +364,7 @@ export function SharedJar({ id }: { id: string }) {
   }
   if (!s || !living) return <main className="detail-page"><p className="empty-note" aria-live="polite">Opening the jar…</p></main>;
 
+  const mine = me?.name === s.keeper;
   const st = living;
   const today = dayOfState(st);
   const score = scoreOf(st);
@@ -364,7 +391,7 @@ export function SharedJar({ id }: { id: string }) {
   };
   const onCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(location.href);
+      await navigator.clipboard.writeText(shareLink(id));
       say('Link copied.');
     } catch {
       say('Copy the address from your browser bar.');
@@ -381,7 +408,7 @@ export function SharedJar({ id }: { id: string }) {
   const onRemove = async () => {
     try {
       await unshare(id);
-      location.hash = `#/u/${s.keeper}`;
+      location.hash = mine ? `#/u/${s.keeper}` : '#/community';
     } catch (e) {
       say((e as Error).message);
     }
@@ -475,15 +502,17 @@ export function SharedJar({ id }: { id: string }) {
           )}
 
           <section className="block manage">
-            {me?.name === s.keeper ? (
+            {mine || moderator ? (
               confirmRemove ? (
                 <span className="confirm">
-                  Remove it from the community shelf? Your jar stays on your own shelf.
+                  {mine ? 'Remove it from the community shelf? Your jar stays on your own shelf.' : `Remove @${s.keeper}\u2019s jar from the community shelf for everyone?`}
                   <button type="button" className="button danger" onClick={onRemove}>Remove</button>
                   <button type="button" className="button quiet" onClick={() => setConfirmRemove(false)}>Keep it</button>
                 </span>
               ) : (
-                <button type="button" className="button" onClick={() => setConfirmRemove(true)}><Trash2 size={16} aria-hidden="true" /> Remove from community shelf</button>
+                <button type="button" className="button" onClick={() => setConfirmRemove(true)}>
+                  <Trash2 size={16} aria-hidden="true" /> {mine ? 'Remove from community shelf' : 'Remove (moderator)'}
+                </button>
               )
             ) : (
               <button type="button" className="button quiet" onClick={onReport}><Flag size={14} aria-hidden="true" /> Report</button>

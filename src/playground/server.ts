@@ -14,7 +14,13 @@
  *   GET    /api/terrariums?id=ID                         one terrarium
  *   POST   /api/terrariums                               share { spec, state, note? }      (keeper only)
  *   POST   /api/terrariums?id=ID&action=like|report      { voter }                         (anyone)
- *   DELETE /api/terrariums?id=ID                                                           (its keeper only)
+ *   DELETE /api/terrariums?id=ID                                                           (its keeper, or a moderator)
+ *   POST   /api/terrariums?id=ID&action=card             { image } a JPEG preview card     (its keeper only)
+ *   GET    /api/terrariums?id=ID&card=1                  the preview card
+ *   POST   /api/keepers?action=ban                       { name } removes all their jars   (moderators only)
+ *   GET    /api/share?id=ID   (served at /s/ID)          a page with link-preview tags that opens the jar
+ *
+ * Moderators are the usernames listed in the MODERATORS environment variable.
  *
  * Keepers prove who they are with headers x-keeper (the username) and
  * x-keeper-key (the recovery code). There are no passwords or emails: the code
@@ -30,6 +36,8 @@ export interface Keeper {
   name: string;
   createdAt: number;
   keyHash: string;
+  /** Set by a moderator: the name cannot sign in or share, and its jars are gone. */
+  banned?: boolean;
 }
 
 export interface PlaygroundStore {
@@ -42,8 +50,13 @@ export interface PlaygroundStore {
   like(id: string, voter: string): Promise<number | null>;
   /** Returns true once enough people have reported it that it is hidden. */
   report(id: string, voter: string): Promise<boolean>;
-  /** Removes it if `keeper` shared it. */
-  remove(id: string, keeper: string): Promise<boolean>;
+  /** Removes it if `keeper` shared it; null removes it whoever did. */
+  remove(id: string, keeper: string | null): Promise<boolean>;
+  /** Marks the keeper banned and removes all their jars. */
+  ban(name: string): Promise<void>;
+  /** A jar's link-preview image, base64 JPEG. */
+  setCard(id: string, base64: string): Promise<void>;
+  getCard(id: string): Promise<string | null>;
   /** False if the name is already taken. */
   createKeeper(k: Keeper): Promise<boolean>;
   getKeeper(name: string): Promise<Keeper | null>;
@@ -92,6 +105,13 @@ export async function redisStore(url: string, token: string): Promise<Playground
     p.zrem(by(keeper), id);
     await p.exec();
   };
+  const remove = async (id: string, keeper: string | null) => {
+    const sub = await r.get<Submission>(item(id));
+    if (!sub || (keeper !== null && sub.keeper !== keeper)) return false;
+    await r.del(item(id), `tr:voters:${id}`, `tr:reports:${id}`, `tr:card:${id}`);
+    await unlist(id, sub.keeper);
+    return true;
+  };
   return {
     async list(sort, offset, limit) {
       return fetch(await r.zrange<string[]>(sort === 'liked' ? 'tr:liked' : 'tr:recent', offset, offset + limit - 1, { rev: true }));
@@ -128,12 +148,18 @@ export async function redisStore(url: string, token: string): Promise<Playground
       await unlist(id, sub.keeper);
       return true;
     },
-    async remove(id, keeper) {
-      const sub = await r.get<Submission>(item(id));
-      if (!sub || sub.keeper !== keeper) return false;
-      await r.del(item(id), `tr:voters:${id}`, `tr:reports:${id}`);
-      await unlist(id, keeper);
-      return true;
+    remove,
+    async ban(name) {
+      const k = await r.get<Keeper>(`tr:keeper:${name}`);
+      if (!k) return;
+      await r.set(`tr:keeper:${name}`, { ...k, banned: true });
+      for (const id of await r.zrange<string[]>(by(name), 0, -1)) await remove(String(id), null);
+    },
+    async setCard(id, base64) {
+      await r.set(`tr:card:${id}`, base64);
+    },
+    async getCard(id) {
+      return r.get<string>(`tr:card:${id}`);
     },
     async createKeeper(k) {
       return (await r.set(`tr:keeper:${k.name}`, k, { nx: true })) === 'OK';
@@ -187,6 +213,7 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
   const keepers = new Map<string, Keeper>();
   const counters = new Map<string, number>();
   const follows = new Map<string, Set<string>>();
+  const cards = new Map<string, string>();
   for (const k of seed.keepers ?? []) keepers.set(k.name, k);
   for (const s of seed.subs ?? []) items.set(s.id, { sub: s, voters: new Set(), reports: new Set(), hidden: false });
   const view = (e: { sub: Submission; voters: Set<string> }) => ({ ...e.sub, likes: e.sub.likes + e.voters.size });
@@ -225,9 +252,22 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
     },
     async remove(id, keeper) {
       const e = items.get(id);
-      if (!e || e.sub.keeper !== keeper) return false;
+      if (!e || (keeper !== null && e.sub.keeper !== keeper)) return false;
       items.delete(id);
+      cards.delete(id);
       return true;
+    },
+    async ban(name) {
+      const k = keepers.get(name);
+      if (!k) return;
+      keepers.set(name, { ...k, banned: true });
+      for (const [id, e] of items) if (e.sub.keeper === name) await this.remove(id, null);
+    },
+    async setCard(id, base64) {
+      cards.set(id, base64);
+    },
+    async getCard(id) {
+      return cards.get(id) ?? null;
     },
     async createKeeper(k) {
       if (keepers.has(k.name)) return false;
@@ -309,7 +349,7 @@ async function checkKeeper(store: PlaygroundStore, name: unknown, code: unknown)
   const n = normaliseName(name);
   if (!n || typeof code !== 'string' || !code) return null;
   const k = await store.getKeeper(n);
-  if (!k) return null;
+  if (!k || k.banned) return null;
   return sameDigest(k.keyHash, await sha256(normaliseCode(code))) ? n : null;
 }
 
@@ -335,21 +375,31 @@ async function readJson(req: Request): Promise<Record<string, unknown>> {
 
 // ------------------------------------------------------------------ handlers
 
-async function keepers(req: Request, url: URL, store: PlaygroundStore): Promise<Response> {
+async function keepers(req: Request, url: URL, store: PlaygroundStore, mods: Set<string>): Promise<Response> {
   if (req.method === 'GET') {
     if (url.searchParams.get('action') === 'following') {
       const me = await fromHeaders(store, req);
-      return me ? json({ names: await store.following(me) }) : problem(401, 'Sign in to see who you follow.');
+      return me ? json({ names: await store.following(me), moderator: mods.has(me) }) : problem(401, 'Sign in to see who you follow.');
     }
     const name = normaliseName(url.searchParams.get('name'));
     const k = name ? await store.getKeeper(name) : null;
-    if (!k) return problem(404, 'There is no keeper by that name.');
+    if (!k || k.banned) return problem(404, 'There is no keeper by that name.');
     const [count, followers] = await Promise.all([store.countByKeeper(k.name), store.followerCount(k.name)]);
     return json({ name: k.name, createdAt: k.createdAt, count, followers });
   }
   if (req.method !== 'POST') return problem(405, 'Method not allowed.');
   const body = await readJson(req);
   const action = url.searchParams.get('action');
+
+  if (action === 'ban') {
+    const me = await fromHeaders(store, req);
+    if (!me || !mods.has(me)) return problem(403, 'Only moderators can do that.');
+    const name = normaliseName(body.name);
+    if (mods.has(name)) return problem(400, 'Moderators cannot be banned here; take them off MODERATORS first.');
+    if (!(await store.getKeeper(name))) return problem(404, 'There is no keeper by that name.');
+    await store.ban(name);
+    return json({ banned: name });
+  }
 
   if (action === 'follow' || action === 'unfollow') {
     const me = await fromHeaders(store, req);
@@ -390,11 +440,23 @@ function listing(page: Submission[], offset: number) {
   return { items, next: items.length === PAGE ? offset + PAGE : null };
 }
 
-async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promise<Response> {
+/** Room for a 1200 x 630 JPEG, base64. */
+const MAX_CARD = 200_000;
+const CARD = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/;
+
+async function terrariums(req: Request, url: URL, store: PlaygroundStore, mods: Set<string>): Promise<Response> {
   const id = url.searchParams.get('id');
   if (id !== null && !ID.test(id)) return problem(400, 'Bad id.');
 
   if (req.method === 'GET') {
+    if (id && url.searchParams.has('card')) {
+      const card = await store.getCard(id);
+      if (!card) return problem(404, 'No picture for that terrarium.');
+      // A jar's card never changes: sharing again makes a new jar id.
+      return new Response(Uint8Array.from(atob(card), (c) => c.charCodeAt(0)), {
+        headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=31536000, immutable' },
+      });
+    }
     if (id) {
       const s = await store.get(id);
       return s ? json(s) : problem(404, 'That terrarium is no longer on the shelf.');
@@ -425,6 +487,17 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promi
     return json({ item: sub }, 201);
   }
 
+  if (req.method === 'POST' && id && url.searchParams.get('action') === 'card') {
+    const keeper = await fromHeaders(store, req);
+    const sub = keeper ? await store.get(id) : null;
+    if (!sub || sub.keeper !== keeper) return problem(403, 'Only the keeper who shared it can add its picture.');
+    const { image } = await readJson(req);
+    const m = typeof image === 'string' && image.length <= MAX_CARD ? CARD.exec(image) : null;
+    if (!m) return problem(400, 'The picture must be a JPEG under 150 KB.');
+    await store.setCard(id, m[1]!);
+    return json({ ok: true });
+  }
+
   if (req.method === 'POST' && id) {
     const action = url.searchParams.get('action');
     const { voter } = await readJson(req);
@@ -441,20 +514,56 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore): Promi
   if (req.method === 'DELETE' && id) {
     const keeper = await fromHeaders(store, req);
     if (!keeper) return problem(401, 'Sign in to remove your terrariums.');
-    return (await store.remove(id, keeper)) ? json({ ok: true }) : problem(403, 'Only the keeper who shared it can remove it.');
+    return (await store.remove(id, mods.has(keeper) ? null : keeper)) ? json({ ok: true }) : problem(403, 'Only the keeper who shared it can remove it.');
   }
 
   return problem(405, 'Method not allowed.');
 }
 
-/** Routes /api/keepers and /api/terrariums. */
-/** `why` explains a missing store, for whoever is setting up the deployment. */
-export async function handle(req: Request, store: PlaygroundStore | null, why?: string): Promise<Response> {
-  if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(why ? { setup: why } : {}) }, 503);
+const escape = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/**
+ * /s/ID: what a chat app or social site sees when a jar's link is pasted (the jar's page
+ * itself lives after a #, which never reaches a server), and a doorway into the app for people.
+ */
+async function sharePage(req: Request, url: URL, store: PlaygroundStore | null): Promise<Response> {
+  const id = url.searchParams.get('id') ?? '';
+  const target = ID.test(id) ? `/#/community/${id}` : '/#/community';
+  const sub = store && ID.test(id) ? await store.get(id) : null;
+  const host = req.headers.get('x-forwarded-host') ?? url.host;
+  const origin = `${req.headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '')}://${host}`;
+  const title = sub ? `${sub.spec.name} by @${sub.keeper}` : 'Terrarium';
+  const description = sub ? sub.note || `A living terrarium on the community shelf, day ${sub.day}. Look inside, or plant a copy.` : 'Build terrariums and watch them live.';
+  const card = sub && (await store!.getCard(id)) ? `${origin}/api/terrariums?id=${id}&card=1` : null;
+  const meta = [
+    ['og:title', title], ['og:description', description], ['og:type', 'website'], ['og:url', `${origin}/s/${id}`],
+    ...(card ? [['og:image', card], ['og:image:width', '1200'], ['og:image:height', '630']] : []),
+    ['twitter:card', card ? 'summary_large_image' : 'summary'],
+  ].map(([k, v]) => `<meta property="${k}" content="${escape(v!)}">`).join('\n');
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escape(title)}</title>
+<meta name="description" content="${escape(description)}">
+${meta}
+<meta http-equiv="refresh" content="0; url=${target}"></head>
+<body><script>location.replace(${JSON.stringify(target)})</script><a href="${target}">Open ${escape(title)}</a></body></html>`;
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' } });
+}
+
+export interface HandleOptions {
+  /** Explains a missing store, for whoever is setting up the deployment. */
+  why?: string;
+  /** Usernames that may remove any jar and ban keepers. */
+  moderators?: string[];
+}
+
+/** Routes /api/keepers, /api/terrariums and /api/share. */
+export async function handle(req: Request, store: PlaygroundStore | null, opts: HandleOptions = {}): Promise<Response> {
   const url = new URL(req.url);
+  if (url.pathname.endsWith('/share')) return sharePage(req, url, store);
+  if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(opts.why ? { setup: opts.why } : {}) }, 503);
+  const mods = new Set((opts.moderators ?? []).map(normaliseName).filter(Boolean));
   try {
-    if (url.pathname.endsWith('/keepers')) return await keepers(req, url, store);
-    return await terrariums(req, url, store);
+    if (url.pathname.endsWith('/keepers')) return await keepers(req, url, store, mods);
+    return await terrariums(req, url, store, mods);
   } catch (e) {
     if (e instanceof InvalidSubmission) return problem(400, e.message);
     console.error(e);
@@ -493,6 +602,12 @@ export function storageConfig(env: Env): StorageConfig {
   if (seen.length === 0) return { problem: 'This deployment has no storage settings. Connect an Upstash Redis database to the project, for Production too, then redeploy.' };
   if (redisKeys.length) return { problem: `Found ${seen.join(', ')}, but no Upstash REST address and token, and ${redisKeys.join(', ')} does not point to Upstash. The shelf needs an Upstash Redis database.` };
   return { problem: `Found ${seen.join(', ')}, but no matching REST address and token pair.` };
+}
+
+/** Handler options from the environment: why storage is missing, and who moderates. */
+export function optionsFromEnv(env: Env): HandleOptions {
+  const c = storageConfig(env);
+  return { why: 'problem' in c ? c.problem : undefined, moderators: (env.MODERATORS ?? '').split(/[\s,]+/) };
 }
 
 /** The store configured by the environment, or null (with the reason) when there is none. */
