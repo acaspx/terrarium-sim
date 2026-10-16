@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three-stdlib';
 import type { DrainageId, HardscapeId, LidId, MoistureId, PlacementId, SubstrateId, VesselId } from '../../engine/index.js';
 import { LOOKS } from './Critters.js';
+import { critterGeometry, critterMaterials } from './critterModels.js';
 import { fbm } from './noise.js';
 import { BUILDERS, leafLitterGeometry, PLANT_COLORS, taperedTube } from './plants.js';
 import { barkTexture, corkTexture, lumpTexture, shellTexture, soilTexture } from './textures.js';
@@ -189,39 +190,18 @@ function crew(id: string) {
   const look = LOOKS[id];
   const g = new THREE.Group();
   if (!look) return g;
-  const mat = new THREE.MeshStandardMaterial({ color: look.color, roughness: look.rough, map: look.shell ? shellTexture(look.shell) : null });
-  const body = new THREE.SphereGeometry(1, 32, 20);
+  const geo = critterGeometry(look.body);
+  const mats = critterMaterials({ shell: look.color, limb: look.limb, accent: look.accent, eye: look.eye, rough: look.rough, map: look.shell ? shellTexture(look.shell) : null });
   // Several for the tiny ones, so they read as a colony.
-  const spots: [number, number, number][] = look.motion === 'hop' ? [[0, 0, 0], [-0.4, 0, 0.2], [0.35, 0, -0.2], [0.1, 0, 0.45]] : [[0, 0, 0]];
-  const k = 0.8 / Math.max(...look.scale);
-  for (const [x, , z] of spots) {
-    const m = new THREE.Mesh(body, mat);
-    m.scale.set(look.scale[0] * k * (spots.length > 1 ? 0.5 : 1), look.scale[1] * k * (spots.length > 1 ? 0.5 : 1), look.scale[2] * k * (spots.length > 1 ? 0.5 : 1));
-    m.position.set(x, m.scale.y * 0.6, z);
+  const spots: [number, number][] = look.motion === 'hop' ? [[0, 0], [-0.45, 0.25], [0.4, -0.25], [0.1, 0.5]] : [[0, 0]];
+  // Sized by the body with its legs and antennae, about twice the shell.
+  const k = (spots.length > 1 ? 0.3 : 0.55) / Math.max(...look.scale);
+  for (const [x, z] of spots) {
+    const m = new THREE.Mesh(geo, mats);
+    m.scale.set(look.scale[0] * k, look.scale[1] * k, look.scale[2] * k);
+    m.position.set(x, m.scale.y * 0.7, z);
     m.rotation.y = 0.6 + x;
     g.add(m);
-    const face = 0.6 + x;
-    if (look.head) {
-      const h = new THREE.Mesh(body, new THREE.MeshStandardMaterial({ color: look.head.color, roughness: 0.4 }));
-      h.scale.set(look.head.scale[0] * k, look.head.scale[1] * k, look.head.scale[2] * k);
-      h.position.set(x + Math.sin(face) * m.scale.z * 0.85, m.position.y + (look.claws ? m.scale.y * 0.8 : 0), z + Math.cos(face) * m.scale.z * 0.85);
-      h.rotation.y = face;
-      g.add(h);
-    }
-    if (look.claws) {
-      const cm = new THREE.MeshStandardMaterial({ color: look.claws.color, roughness: 0.4 });
-      for (const side of [-1, 1]) {
-        const c = new THREE.Mesh(body, cm);
-        c.scale.set(look.claws.scale[0] * k, look.claws.scale[1] * k, look.claws.scale[2] * k);
-        c.position.set(
-          x + Math.sin(face) * m.scale.z * 1.05 + Math.cos(face) * m.scale.x * 0.8 * side,
-          m.position.y,
-          z + Math.cos(face) * m.scale.z * 1.05 - Math.sin(face) * m.scale.x * 0.8 * side,
-        );
-        c.rotation.y = face;
-        g.add(c);
-      }
-    }
   }
   const disc = soilDisc();
   disc.scale.set(0.95, 0.6, 0.95);

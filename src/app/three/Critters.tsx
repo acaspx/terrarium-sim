@@ -6,6 +6,7 @@ import type { TerrariumState } from '../../engine/index.js';
 import type { Layout } from './layout.js';
 import { clamp, hashSeed } from './noise.js';
 import { shakeOf, useMotion } from './rig.js';
+import { critterGeometry, critterMaterials, type Body } from './critterModels.js';
 import { shellTexture } from './textures.js';
 import { footprint, insideFp, pointIn } from './vessel.js';
 
@@ -14,17 +15,19 @@ type Motion = 'hop' | 'crawl' | 'fly';
 export interface Look {
   /** Half-extents of the body: width, height, length. */
   scale: [number, number, number];
+  body: Body;
   color: string;
+  /** Legs, antennae and underside. */
+  limb: string;
+  /** The face (rubber ducky) or claws (crab). */
+  accent?: string;
+  eye?: string;
   shell?: 'dairy-cow' | 'magic-potion';
-  /** A differently coloured head, for the rubber ducky's yellow face. */
-  head?: { color: string; scale: [number, number, number] };
   speed: number;
   rough: number;
   motion: Motion;
   /** Pill bugs roll into a ball when startled instead of running. */
   rolls?: boolean;
-  /** A pair of claws at the front, for crabs. */
-  claws?: { color: string; scale: [number, number, number] };
   /** Walks sideways, as crabs do: the body faces across its path. */
   sideways?: boolean;
   /** How many to draw for a population, and whether they hide by day. */
@@ -36,19 +39,16 @@ const big = (cap: number, perShown: number, dayShare: number) => (pop: number, l
 
 /** What each animal looks like, and how many of a colony are out where you can see them. */
 export const LOOKS: Record<string, Look> = {
-  springtail: { scale: [0.0045, 0.0035, 0.009], color: '#eef0ea', speed: 0, rough: 0.5, motion: 'hop', count: (p) => Math.min(45, Math.round(Math.log10(p + 1) * 11)) },
-  'dwarf-white-isopod': { scale: [0.012, 0.007, 0.02], color: '#eceee6', speed: 0.025, rough: 0.45, motion: 'crawl', count: (p) => Math.min(16, Math.ceil(Math.log2(p + 1) * 1.6)) },
-  'rough-woodlouse': { scale: [0.022, 0.011, 0.036], color: '#5d6268', speed: 0.035, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.35) },
-  'dairy-cow-isopod': { scale: [0.024, 0.012, 0.04], color: '#ffffff', shell: 'dairy-cow', speed: 0.05, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.5) },
-  'rubber-ducky-isopod': { scale: [0.016, 0.011, 0.024], color: '#5f5750', head: { color: '#f2c230', scale: [0.011, 0.008, 0.008] }, speed: 0.015, rough: 0.4, motion: 'crawl', count: big(8, 1.5, 0.5) },
-  'magic-potion-isopod': { scale: [0.02, 0.013, 0.03], color: '#ffffff', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', rolls: true, count: big(10, 2, 0.5) },
-  'vampire-crab': {
-    scale: [0.04, 0.016, 0.03], color: '#4b2d4f', head: { color: '#f3d23c', scale: [0.016, 0.006, 0.005] },
-    claws: { color: '#b8344a', scale: [0.011, 0.009, 0.016] }, speed: 0.04, rough: 0.35, motion: 'crawl', sideways: true, count: big(6, 1, 0.5),
-  },
-  'fungus-gnat': { scale: [0.006, 0.006, 0.009], color: '#1e1e1e', speed: 0.18, rough: 0.6, motion: 'fly', count: (p) => Math.min(12, Math.ceil(p / 12)) },
+  springtail: { body: 'springtail', scale: [0.0045, 0.0035, 0.009], color: '#eef0ea', limb: '#d9dcd4', speed: 0, rough: 0.5, motion: 'hop', count: (p) => Math.min(45, Math.round(Math.log10(p + 1) * 11)) },
+  'dwarf-white-isopod': { body: 'isopod', scale: [0.012, 0.007, 0.02], color: '#eceee6', limb: '#d6d8cf', speed: 0.025, rough: 0.45, motion: 'crawl', count: (p) => Math.min(16, Math.ceil(Math.log2(p + 1) * 1.6)) },
+  'rough-woodlouse': { body: 'isopod', scale: [0.022, 0.011, 0.036], color: '#5d6268', limb: '#45494e', speed: 0.035, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.35) },
+  'dairy-cow-isopod': { body: 'isopod', scale: [0.024, 0.012, 0.04], color: '#ffffff', limb: '#cfc9bd', shell: 'dairy-cow', speed: 0.05, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.5) },
+  'rubber-ducky-isopod': { body: 'isopod', scale: [0.016, 0.011, 0.024], color: '#5f5750', limb: '#4a433d', accent: '#f2c230', speed: 0.015, rough: 0.4, motion: 'crawl', count: big(8, 1.5, 0.5) },
+  'magic-potion-isopod': { body: 'isopod', scale: [0.02, 0.013, 0.03], color: '#ffffff', limb: '#3a4152', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', rolls: true, count: big(10, 2, 0.5) },
+  'vampire-crab': { body: 'crab', scale: [0.04, 0.016, 0.03], color: '#4b2d4f', limb: '#5a2a3e', accent: '#b8344a', eye: '#f3d23c', speed: 0.04, rough: 0.35, motion: 'crawl', sideways: true, count: big(6, 1, 0.5) },
+  'fungus-gnat': { body: 'gnat', scale: [0.006, 0.006, 0.009], color: '#1e1e1e', limb: '#2a2a2a', speed: 0.18, rough: 0.6, motion: 'fly', count: (p) => Math.min(12, Math.ceil(p / 12)) },
 };
-const FALLBACK: Look = { scale: [0.015, 0.009, 0.024], color: '#8a8a84', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
+const FALLBACK: Look = { body: 'isopod', scale: [0.015, 0.009, 0.024], color: '#8a8a84', limb: '#6a6a64', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
 
 /** quality low: about half the animals are drawn (the colony itself is unchanged). */
 export function Critters({ L, state, lively, quality = 'high' }: { L: Layout; state: TerrariumState; lively: boolean; quality?: 'high' | 'low' }) {
@@ -60,7 +60,7 @@ export function Critters({ L, state, lively, quality = 'high' }: { L: Layout; st
     }),
     [state.fauna, state.climate.lightOn, quality],
   );
-  return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} />)}</>;
+  return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} quality={quality} />)}</>;
 }
 
 interface Bug {
@@ -71,15 +71,11 @@ interface Bug {
 }
 /** How far a tap on the soil carries, in scene units. */
 const STARTLE_RADIUS = 0.45;
-const BODY = new THREE.SphereGeometry(1, 12, 8);
 
-function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; L: Layout; lively: boolean }) {
+function Swarm({ id, look, n, L, lively, quality }: { id: string; look: Look; n: number; L: Layout; lively: boolean; quality: 'high' | 'low' }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-  const heads = useRef<THREE.InstancedMesh>(null);
-  const claws = useRef<THREE.InstancedMesh>(null);
-  const clawMat = useMemo(() => (look.claws ? new THREE.MeshStandardMaterial({ color: look.claws.color, roughness: 0.4 }) : null), [look]);
-  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: look.color, roughness: look.rough, map: look.shell ? shellTexture(look.shell) : null }), [look]);
-  const headMat = useMemo(() => (look.head ? new THREE.MeshStandardMaterial({ color: look.head.color, roughness: 0.4 }) : null), [look]);
+  const geometry = critterGeometry(look.body, quality);
+  const mats = useMemo(() => critterMaterials({ shell: look.color, limb: look.limb, accent: look.accent, eye: look.eye, rough: look.rough, map: look.shell ? shellTexture(look.shell) : null }), [look]);
   const bugs = useMemo<Bug[]>(() => {
     const r = makeRng(hashSeed(id) + n);
     return Array.from({ length: n }, () => {
@@ -90,8 +86,7 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
   }, [id, n, L]);
   const tmp = useMemo(() => ({
     m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(),
-    s: new THREE.Vector3(...look.scale), hs: new THREE.Vector3(...(look.head?.scale ?? [0, 0, 0])),
-    cs: new THREE.Vector3(...(look.claws?.scale ?? [0, 0, 0])),
+    s: new THREE.Vector3(...look.scale),
   }), [look]);
 
   const motion = useMotion();
@@ -182,30 +177,8 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
       tmp.p.set(b.x, y, b.z);
       tmp.m.compose(tmp.p, tmp.q, scale);
       mesh.setMatrixAt(i, tmp.m);
-      if (heads.current) {
-        if (scale === ball) tmp.hs.setScalar(0);
-        else tmp.hs.set(...(look.head?.scale ?? [0, 0, 0]));
-        const up = look.claws ? look.scale[1] * 0.8 : 0;
-        tmp.p.set(b.x + Math.sin(face) * look.scale[2] * 0.85, y + up, b.z + Math.cos(face) * look.scale[2] * 0.85);
-        tmp.m.compose(tmp.p, tmp.q, tmp.hs);
-        heads.current.setMatrixAt(i, tmp.m);
-      }
-      if (claws.current) {
-        // Left and right of the front, held a little forward.
-        for (const side of [-1, 1]) {
-          const fx = Math.sin(face) * look.scale[2] * 1.05;
-          const fz = Math.cos(face) * look.scale[2] * 1.05;
-          const sx = Math.cos(face) * look.scale[0] * 0.8 * side;
-          const sz = -Math.sin(face) * look.scale[0] * 0.8 * side;
-          tmp.p.set(b.x + fx + sx, y, b.z + fz + sz);
-          tmp.m.compose(tmp.p, tmp.q, tmp.cs);
-          claws.current.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), tmp.m);
-        }
-      }
     }
     mesh.instanceMatrix.needsUpdate = true;
-    if (heads.current) heads.current.instanceMatrix.needsUpdate = true;
-    if (claws.current) claws.current.instanceMatrix.needsUpdate = true;
   };
 
   useLayoutEffect(() => write(0));
@@ -216,9 +189,7 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
   if (n === 0) return null;
   return (
     <>
-      <instancedMesh key={n} ref={ref} args={[BODY, mat, n]} castShadow frustumCulled={false} />
-      {headMat && <instancedMesh key={`h${n}`} ref={heads} args={[BODY, headMat, n]} frustumCulled={false} />}
-      {clawMat && <instancedMesh key={`c${n}`} ref={claws} args={[BODY, clawMat, n * 2]} castShadow frustumCulled={false} />}
+      <instancedMesh key={n} ref={ref} args={[geometry, mats, n]} castShadow frustumCulled={false} userData={{ critter: id }} />
     </>
   );
 }
