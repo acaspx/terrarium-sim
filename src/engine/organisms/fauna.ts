@@ -46,6 +46,19 @@ export function stepFauna(s: TerrariumState): void {
       p.detritusG -= eatD * 0.7; // 30% comes back out as frass
       eaten = eatM + eatD;
 
+      // Hunters make up the rest from the colonies they prey on, catching only a few an hour.
+      for (const id of sp.prey ?? []) {
+        const prey = s.fauna.find((x) => x.speciesId === id);
+        const bodyG = prey && faunaSpecies(id).bodyG;
+        if (!prey || !bodyG || eaten >= demand) continue;
+        const count = prey.adults + prey.juveniles;
+        const caught = Math.min((demand - eaten) / bodyG, count * CONFIG.fauna.catchPerHour);
+        if (caught <= 0) continue;
+        prey.adults -= (caught * prey.adults) / count;
+        prey.juveniles -= (caught * prey.juveniles) / count;
+        eaten += caught * bodyG;
+      }
+
       // Hungry animals with a taste for greens start on the plants.
       const hunger = 1 - eaten / demand;
       if (hunger > 0.5 && sp.diet.plant > 0 && s.plants.length > 0) {

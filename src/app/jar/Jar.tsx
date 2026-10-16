@@ -424,6 +424,22 @@ export function Jar({ spec, state, lively = false, className, title }: JarProps)
           </g>,
         );
       }
+    } else if (f.speciesId === 'vampire-crab') {
+      // A wide purple shell, two red claws, yellow eyes; most hide by day.
+      const n = Math.round(Math.min(6, Math.ceil(pop)) * (cl.lightOn ? 0.5 : 1));
+      for (let i = 0; i < n; i++) {
+        const x = gl + 12 + r() * (gr - gl - 24);
+        faunaDots.push(
+          <g key={`c${i}`}>
+            <path d={`M${x - 6},${gy} l2,-3 M${x - 4},${gy} l1,-3 M${x + 4},${gy} l-1,-3 M${x + 6},${gy} l-2,-3`} stroke="#3a2340" strokeWidth={0.7} />
+            <ellipse cx={x} cy={gy - 3} rx={4.8} ry={2.8} fill="#4b2d4f" />
+            <circle cx={x - 5.4} cy={gy - 4.2} r={1.5} fill="#b8344a" />
+            <circle cx={x + 5.4} cy={gy - 4.2} r={1.5} fill="#b8344a" />
+            <circle cx={x - 1.5} cy={gy - 5.4} r={0.8} fill="#f3d23c" />
+            <circle cx={x + 1.5} cy={gy - 5.4} r={0.8} fill="#f3d23c" />
+          </g>,
+        );
+      }
     } else if (f.speciesId === 'fungus-gnat') {
       const n = Math.min(9, Math.ceil(pop / 12));
       for (let i = 0; i < n; i++)

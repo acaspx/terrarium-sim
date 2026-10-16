@@ -23,6 +23,10 @@ export interface Look {
   motion: Motion;
   /** Pill bugs roll into a ball when startled instead of running. */
   rolls?: boolean;
+  /** A pair of claws at the front, for crabs. */
+  claws?: { color: string; scale: [number, number, number] };
+  /** Walks sideways, as crabs do: the body faces across its path. */
+  sideways?: boolean;
   /** How many to draw for a population, and whether they hide by day. */
   count: (pop: number, lightOn: boolean) => number;
 }
@@ -38,6 +42,10 @@ export const LOOKS: Record<string, Look> = {
   'dairy-cow-isopod': { scale: [0.024, 0.012, 0.04], color: '#ffffff', shell: 'dairy-cow', speed: 0.05, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.5) },
   'rubber-ducky-isopod': { scale: [0.016, 0.011, 0.024], color: '#5f5750', head: { color: '#f2c230', scale: [0.011, 0.008, 0.008] }, speed: 0.015, rough: 0.4, motion: 'crawl', count: big(8, 1.5, 0.5) },
   'magic-potion-isopod': { scale: [0.02, 0.013, 0.03], color: '#ffffff', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', rolls: true, count: big(10, 2, 0.5) },
+  'vampire-crab': {
+    scale: [0.04, 0.016, 0.03], color: '#4b2d4f', head: { color: '#f3d23c', scale: [0.016, 0.006, 0.005] },
+    claws: { color: '#b8344a', scale: [0.011, 0.009, 0.016] }, speed: 0.04, rough: 0.35, motion: 'crawl', sideways: true, count: big(6, 1, 0.5),
+  },
   'fungus-gnat': { scale: [0.006, 0.006, 0.009], color: '#1e1e1e', speed: 0.18, rough: 0.6, motion: 'fly', count: (p) => Math.min(12, Math.ceil(p / 12)) },
 };
 const FALLBACK: Look = { scale: [0.015, 0.009, 0.024], color: '#8a8a84', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
@@ -68,6 +76,8 @@ const BODY = new THREE.SphereGeometry(1, 12, 8);
 function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; L: Layout; lively: boolean }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const heads = useRef<THREE.InstancedMesh>(null);
+  const claws = useRef<THREE.InstancedMesh>(null);
+  const clawMat = useMemo(() => (look.claws ? new THREE.MeshStandardMaterial({ color: look.claws.color, roughness: 0.4 }) : null), [look]);
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: look.color, roughness: look.rough, map: look.shell ? shellTexture(look.shell) : null }), [look]);
   const headMat = useMemo(() => (look.head ? new THREE.MeshStandardMaterial({ color: look.head.color, roughness: 0.4 }) : null), [look]);
   const bugs = useMemo<Bug[]>(() => {
@@ -81,6 +91,7 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
   const tmp = useMemo(() => ({
     m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(),
     s: new THREE.Vector3(...look.scale), hs: new THREE.Vector3(...(look.head?.scale ?? [0, 0, 0])),
+    cs: new THREE.Vector3(...(look.claws?.scale ?? [0, 0, 0])),
   }), [look]);
 
   const motion = useMotion();
@@ -164,7 +175,9 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
         if (insideFp(fp, nx, nz, 0.02)) { b.x = nx; b.z = nz; } else b.h += Math.PI * 0.7;
         y = L.ground.heightAt(b.x, b.z) + look.scale[1] * 0.7;
       }
-      tmp.e.set(0, b.h, 0);
+      // Crabs face across their path; the front is where the eyes and claws go.
+      const face = look.sideways ? b.h + Math.PI / 2 : b.h;
+      tmp.e.set(0, face, 0);
       tmp.q.setFromEuler(tmp.e);
       tmp.p.set(b.x, y, b.z);
       tmp.m.compose(tmp.p, tmp.q, scale);
@@ -172,13 +185,27 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
       if (heads.current) {
         if (scale === ball) tmp.hs.setScalar(0);
         else tmp.hs.set(...(look.head?.scale ?? [0, 0, 0]));
-        tmp.p.set(b.x + Math.sin(b.h) * look.scale[2] * 0.85, y, b.z + Math.cos(b.h) * look.scale[2] * 0.85);
+        const up = look.claws ? look.scale[1] * 0.8 : 0;
+        tmp.p.set(b.x + Math.sin(face) * look.scale[2] * 0.85, y + up, b.z + Math.cos(face) * look.scale[2] * 0.85);
         tmp.m.compose(tmp.p, tmp.q, tmp.hs);
         heads.current.setMatrixAt(i, tmp.m);
+      }
+      if (claws.current) {
+        // Left and right of the front, held a little forward.
+        for (const side of [-1, 1]) {
+          const fx = Math.sin(face) * look.scale[2] * 1.05;
+          const fz = Math.cos(face) * look.scale[2] * 1.05;
+          const sx = Math.cos(face) * look.scale[0] * 0.8 * side;
+          const sz = -Math.sin(face) * look.scale[0] * 0.8 * side;
+          tmp.p.set(b.x + fx + sx, y, b.z + fz + sz);
+          tmp.m.compose(tmp.p, tmp.q, tmp.cs);
+          claws.current.setMatrixAt(i * 2 + (side > 0 ? 1 : 0), tmp.m);
+        }
       }
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (heads.current) heads.current.instanceMatrix.needsUpdate = true;
+    if (claws.current) claws.current.instanceMatrix.needsUpdate = true;
   };
 
   useLayoutEffect(() => write(0));
@@ -191,6 +218,7 @@ function Swarm({ id, look, n, L, lively }: { id: string; look: Look; n: number; 
     <>
       <instancedMesh key={n} ref={ref} args={[BODY, mat, n]} castShadow frustumCulled={false} />
       {headMat && <instancedMesh key={`h${n}`} ref={heads} args={[BODY, headMat, n]} frustumCulled={false} />}
+      {clawMat && <instancedMesh key={`c${n}`} ref={claws} args={[BODY, clawMat, n * 2]} castShadow frustumCulled={false} />}
     </>
   );
 }

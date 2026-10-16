@@ -68,6 +68,13 @@ export const CONFIG = {
     restDays: 45,
     mushroomPerGMycelium: 0.3,
   },
+  fauna: {
+    /**
+     * Most of a prey colony a predator can catch in an hour. Springtails hide in the soil and
+     * jump; a modest catch rate keeps a colony and its predators going together.
+     */
+    catchPerHour: 0.01,
+  },
   mold: {
     growthPerDay: 0.45,
     deathPerDay: 0.04,

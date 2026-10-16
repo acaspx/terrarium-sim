@@ -110,6 +110,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion
       <JarRig motion={motion} autoRotate={autoRotate} radius={L.shape.kind === 'square' ? Math.max(L.shape.hx, L.shape.hz) : Math.max(...L.shape.profile.map(([r]) => r))}>
         <Layers L={L} spec={spec} wet={q(wet, 0.05)} reservoir={q(reservoir, 0.05)} waterlogged={state.waterloggedHours > 24} />
         <Hardscape L={L} spec={spec} onPlace={onPlace} />
+        {spec.fauna.some((f) => f.speciesId === 'vampire-crab' && f.count > 0) && <WaterDish L={L} />}
         <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} onArrange={onArrange} />
         <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} wood={spec.placed?.wood} />
         <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
@@ -665,6 +666,34 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
       )}
       {drag?.what === 'wood' && wood && <DropRing L={L} x={wood.x + drag.dx} z={wood.z + drag.dz} r={0.22} />}
       {drag?.what === 'stone' && stone && <DropRing L={L} x={stone.x + drag.dx} z={stone.z + drag.dz} r={stone.s * 1.1} />}
+    </group>
+  );
+}
+
+/** Crabs need water to drink and to wet their gills; keepers sink a shallow dish into the soil. */
+function WaterDish({ L }: { L: Layout }) {
+  const { groundFp } = L;
+  const R = groundFp.kind === 'circle' ? groundFp.r : Math.min(groundFp.hx, groundFp.hz) * 1.1;
+  const d = useMemo(() => {
+    const r = 0.15 * Math.min(1, R);
+    const [x, z] = pointIn(groundFp, -0.5, 0.42);
+    return { r, x, z, y: L.ground.heightAt(x, z) };
+  }, [groundFp, R, L.ground]);
+  const mats = useMemo(() => ({
+    dish: new THREE.MeshStandardMaterial({ color: '#8d877d', roughness: 0.75 }),
+    water: new THREE.MeshPhysicalMaterial({ color: '#3d5a52', roughness: 0.04, transparent: true, opacity: 0.82, clearcoat: 1 }),
+  }), []);
+  return (
+    <group position={[d.x, d.y, d.z]}>
+      <mesh material={mats.dish} position={[0, 0.005, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[d.r, d.r * 0.8, 0.05, 40, 1, true]} />
+      </mesh>
+      <mesh material={mats.dish} position={[0, -0.015, 0]} receiveShadow>
+        <cylinderGeometry args={[d.r * 0.8, d.r * 0.8, 0.01, 40]} />
+      </mesh>
+      <mesh material={mats.water} position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[d.r * 0.97, 40]} />
+      </mesh>
     </group>
   );
 }

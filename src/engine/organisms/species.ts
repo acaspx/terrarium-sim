@@ -110,6 +110,7 @@ const fauna: FaunaSpecies[] = [
     intakeG: { juvenile: 0.00002, adult: 0.00005 },
     diet: { mold: 1, detritus: 0.25, plant: 0 },
     densityPerL: 3000,
+    bodyG: 0.00002,
     confidence: 'literature',
     notes: 'Tiny white hoppers that graze mold. They boom while a jar is new, then settle as the mold runs out. Die quickly in dry soil.',
   },
@@ -172,6 +173,26 @@ const fauna: FaunaSpecies[] = [
     densityPerL: 35,
     confidence: 'literature',
     notes: 'A pill bug in deep blue-grey flecked with orange. Rolls into a ball when disturbed and copes with a drier jar than most isopods.',
+  },
+  {
+    kind: 'fauna', id: 'vampire-crab', commonName: 'Vampire crab', scientificName: 'Geosesarma sp.',
+    role: 'cleanup',
+    tempC: { min: 18, opt: 25, max: 30 },
+    // Damp, not wet: they breathe through gills kept wet from the water dish and humid air.
+    moisture: { min: 0.3, opt: 0.55, max: 1.35 },
+    // The mother carries her eggs about a month, then they walk off as tiny crabs: no larval stage.
+    eggDays: 30, juvenileDays: 120, adultLifespanDays: 800,
+    // 20-80 eggs a brood, but few young survive the adults, who eat them.
+    fecundityPerDay: 0.08,
+    intakeG: { juvenile: 0.003, adult: 0.02 },
+    diet: { mold: 0.2, detritus: 1, plant: 0.2 },
+    // Springtail colonies feed them between meals; keepers rely on it.
+    prey: ['springtail'],
+    densityPerL: 0.4,
+    minL: 25,
+    climbs: true,
+    confidence: 'care-sheet',
+    notes: 'Tiny purple land crabs with yellow eyes, from Java. They scuttle sideways, hide by day and need warmth, high humidity, a water dish and a lid.',
   },
   {
     kind: 'fauna', id: 'fungus-gnat', commonName: 'Fungus gnat', scientificName: 'Bradysia sp.',
