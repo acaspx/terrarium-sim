@@ -25,9 +25,9 @@ functions (`api/terrariums.ts`, `api/keepers.ts`) backed by Redis.
 1. Push this repo to GitHub.
 2. In Vercel, choose **Add New → Project** and import the repo. Vercel reads
    `vercel.json` (build `npm run build`, output `dist`).
-3. For the community shelf, add a Redis database from the Vercel Marketplace
-   (Upstash). It sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`
-   (`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` also work).
+3. For the community shelf, add a Redis database in Vercel's Storage tab (Redis, or
+   Upstash for Redis) and connect it to the project. It sets `REDIS_URL`, which the
+   app uses (Upstash's REST variables work too). See docs/DEPLOY.md.
    Without them the community shelf says it is not connected, and the rest of the app works.
 4. Every push to `main` deploys; every branch gets a preview URL.
 

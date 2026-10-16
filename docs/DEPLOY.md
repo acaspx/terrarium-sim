@@ -1,23 +1,21 @@
 # Deploying the 3D view and the playground
 
 Checklist for taking `experiment/3d-playground` live. Steps marked **(you)**
-need your Vercel or Upstash account; everything else can be checked from the
+need your Vercel account; everything else can be checked from the
 preview URL.
 
 ## 1. Storage for the playground (you)
 
-The playground is one Vercel function, `api/terrariums.ts`, backed by Redis.
+The playground is three small Vercel functions in `api/`, backed by any Redis.
 Without storage the rest of the site works and the playground says it is not
 connected.
 
-- [ ] In the Vercel dashboard, open the project, then **Storage → Create Database
-      → Upstash (Redis)**. The free plan is plenty to start.
-- [ ] Connect it to this project for **Production and Preview**. This sets
-      `KV_REST_API_URL` and `KV_REST_API_TOKEN`. (`UPSTASH_REDIS_REST_URL` and
-      `UPSTASH_REDIS_REST_TOKEN` also work if you create the database in Upstash
-      directly and add them by hand. Prefixed names such as
-      `STORAGE_KV_REST_API_URL`, and an Upstash `REDIS_URL` on its own, are
-      found too.)
+- [ ] In the Vercel dashboard, open the project, then **Storage → Create Database**
+      and pick a Redis (Redis, or Upstash for Redis). The free plan is plenty to start.
+- [ ] Connect it to this project for **Production and Preview**. That sets
+      `REDIS_URL` (or `KV_URL`); the app connects with it. Upstash's REST pair
+      (`KV_REST_API_URL`/`TOKEN` or `UPSTASH_REDIS_REST_URL`/`TOKEN`) works too, and
+      so do prefixed names such as `STORAGE_REDIS_URL`.
 - [ ] Redeploy the preview after adding the variables. Environment variables
       only reach deployments built after they were set.
 
@@ -84,7 +82,8 @@ length-limited; 5 new usernames per hour per IP; 6 shares per hour per keeper;
 one like per visitor; anything reported by 3 people is hidden; only a jar's keeper
 can remove it.
 
-- [ ] Know how to remove a jar by hand: in the Upstash console, remove its ID from
+- [ ] Know how to remove a jar by hand: as a moderator, use **Remove (moderator)** on the jar's page. By hand, in the
+      database's console (or `redis-cli`), remove its ID from
       the `tr:recent`, `tr:liked` and `tr:by:<username>` sorted sets (the ID is the
       last part of the jar's URL).
 - [ ] Know how to retire a username: delete `tr:keeper:<username>`. Its jars stay
