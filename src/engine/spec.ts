@@ -136,6 +136,7 @@ export const CREW_COUNTS: Record<string, number[]> = {
   'dairy-cow-isopod': [5, 10],
   'rubber-ducky-isopod': [4, 8],
   'magic-potion-isopod': [5, 10],
+  'vampire-crab': [2, 3],
 };
 
 /** Driftwood mass, g dry per litre of vessel. */
@@ -299,6 +300,12 @@ export function checkSpec(spec: TerrariumSpec): SpecIssue[] {
       out.push({ severity: 'warn', target: f.speciesId, message: `${sp.commonName}s need damp soil. An open top makes that hard to keep.` });
     if (spec.sizeL <= 1 && f.speciesId !== 'springtail')
       out.push({ severity: 'info', target: f.speciesId, message: 'A mini jar is a tight squeeze. Springtails alone are usually enough.' });
+    else if (sp.minL && spec.sizeL < sp.minL)
+      out.push({ severity: 'warn', target: f.speciesId, message: `${sp.commonName}s need room: at least ${sp.minL} L.` });
+    if (sp.climbs && spec.lid === 'open')
+      out.push({ severity: 'critical', target: f.speciesId, message: `${sp.commonName}s climb out of an open top.` });
+    if (room.tempC < sp.tempC.min + 3)
+      out.push({ severity: 'warn', target: f.speciesId, message: `A cool room is near the bottom of the ${sp.commonName.toLowerCase()}'s range.` });
   }
   if (!spec.fauna.some((f) => f.speciesId === 'springtail' && f.count > 0) && spec.plants.length > 0)
     out.push({ severity: 'info', target: 'fauna', message: 'Without springtails, the first-month mold bloom tends to linger.' });
@@ -430,6 +437,21 @@ export const RECIPES: { id: string; label: string; detail: string; spec: Terrari
       ],
       fauna: [{ speciesId: 'springtail', count: 150 }, { speciesId: 'magic-potion-isopod', count: 10 }],
       placement: 'grow-light', growLight: 'medium',
+    },
+  },
+  {
+    id: 'crab-cabinet', label: 'Crab cabinet', detail: 'A warm Wardian case for three vampire crabs, with a water dish and springtails for them to hunt. Feed them now and then.',
+    spec: {
+      ...BLANK_SPEC, name: 'Crab cabinet', vessel: 'wardian', sizeL: 40, lid: 'sealed', substrate: 'bioactive', depth: 'deep',
+      hardscape: ['wood', 'stone', 'leaf-litter'],
+      plants: [
+        { speciesId: 'birds-nest-fern', size: 'small', at: [0.1, -0.55] },
+        { speciesId: 'creeping-fig', size: 'small', at: [-0.6, -0.4] },
+        { speciesId: 'fittonia', size: 'small', at: [0.55, 0.5] },
+        { speciesId: 'spike-moss', size: 'small', at: [0.1, 0.35] },
+      ],
+      fauna: [{ speciesId: 'springtail', count: 150 }, { speciesId: 'vampire-crab', count: 3 }],
+      placement: 'grow-light', growLight: 'medium', room: 'warm',
     },
   },
 ];

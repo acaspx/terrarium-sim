@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BLANK_SPEC, buildTerrarium, checkSpec, dli, layoutOf, RECIPES, run, shading, step, type TerrariumSpec,
+  BLANK_SPEC, buildTerrarium, care, checkSpec, dli, layoutOf, RECIPES, run, shading, step, type TerrariumSpec,
 } from '../src/engine/index.js';
 
 const days = (n: number) => n * 24;
@@ -118,6 +118,46 @@ describe('new animals', () => {
   it('warns that big isopods are too hungry for a small jar', () => {
     const issues = checkSpec({ ...recipe('tropical-jar'), sizeL: 6, fauna: [{ speciesId: 'dairy-cow-isopod', count: 10 }] });
     expect(issues.some((i) => i.target === 'dairy-cow-isopod' && i.severity === 'warn')).toBe(true);
+  });
+});
+
+describe('vampire crabs', () => {
+  const crabJar = (over: Partial<TerrariumSpec> = {}): TerrariumSpec => ({
+    ...recipe('mossy-woodland'), vessel: 'cube', sizeL: 40, lid: 'cork', room: 'warm', placement: 'grow-light',
+    fauna: [{ speciesId: 'springtail', count: 50 }, { speciesId: 'vampire-crab', count: 3 }], ...over,
+  });
+  const crabs = (s: ReturnType<typeof buildTerrarium>) => {
+    const f = s.fauna.find((x) => x.speciesId === 'vampire-crab');
+    return f ? f.adults + f.juveniles : 0;
+  };
+  const live = (spec: TerrariumSpec, d: number, fed: boolean) => {
+    const s = buildTerrarium(spec);
+    for (let i = 1; i <= d; i++) {
+      run(s, 24);
+      if (fed && i % 30 === 0) care.feed(s, 3);
+    }
+    return s;
+  };
+
+  it('a fed trio holds on for two years in a warm, roomy jar', () => {
+    expect(crabs(live(crabJar(), 730, true))).toBeGreaterThan(2);
+  });
+
+  it('left unfed in a small jar, they die out within a year', () => {
+    expect(crabs(live(crabJar({ vessel: 'jar', sizeL: 6, lid: 'sealed' }), 365, false))).toBeLessThan(0.1);
+  });
+
+  it('hunt the springtails', () => {
+    const without = live(crabJar({ fauna: [{ speciesId: 'springtail', count: 50 }] }), 180, true);
+    const with_ = live(crabJar(), 180, true);
+    const springs = (s: ReturnType<typeof buildTerrarium>) => s.fauna.find((x) => x.speciesId === 'springtail')!.adults;
+    expect(springs(with_)).toBeLessThan(springs(without) * 0.8);
+  });
+
+  it('warn about a small vessel, an open top and a cool room', () => {
+    const issues = checkSpec(crabJar({ vessel: 'jar', sizeL: 6, lid: 'open', room: 'cool' })).filter((i) => i.target === 'vampire-crab');
+    expect(issues.map((i) => i.severity).sort()).toEqual(['critical', 'warn', 'warn', 'warn', 'warn']);
+    expect(checkSpec(crabJar()).filter((i) => i.target === 'vampire-crab')).toEqual([]);
   });
 });
 

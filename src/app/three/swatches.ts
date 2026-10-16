@@ -200,11 +200,27 @@ function crew(id: string) {
     m.position.set(x, m.scale.y * 0.6, z);
     m.rotation.y = 0.6 + x;
     g.add(m);
+    const face = 0.6 + x;
     if (look.head) {
       const h = new THREE.Mesh(body, new THREE.MeshStandardMaterial({ color: look.head.color, roughness: 0.4 }));
       h.scale.set(look.head.scale[0] * k, look.head.scale[1] * k, look.head.scale[2] * k);
-      h.position.set(x + Math.sin(0.6 + x) * m.scale.z * 0.85, m.position.y, z + Math.cos(0.6 + x) * m.scale.z * 0.85);
+      h.position.set(x + Math.sin(face) * m.scale.z * 0.85, m.position.y + (look.claws ? m.scale.y * 0.8 : 0), z + Math.cos(face) * m.scale.z * 0.85);
+      h.rotation.y = face;
       g.add(h);
+    }
+    if (look.claws) {
+      const cm = new THREE.MeshStandardMaterial({ color: look.claws.color, roughness: 0.4 });
+      for (const side of [-1, 1]) {
+        const c = new THREE.Mesh(body, cm);
+        c.scale.set(look.claws.scale[0] * k, look.claws.scale[1] * k, look.claws.scale[2] * k);
+        c.position.set(
+          x + Math.sin(face) * m.scale.z * 1.05 + Math.cos(face) * m.scale.x * 0.8 * side,
+          m.position.y,
+          z + Math.cos(face) * m.scale.z * 1.05 - Math.sin(face) * m.scale.x * 0.8 * side,
+        );
+        c.rotation.y = face;
+        g.add(c);
+      }
     }
   }
   const disc = soilDisc();

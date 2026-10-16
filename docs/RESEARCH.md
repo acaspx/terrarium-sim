@@ -88,6 +88,13 @@ These are design conclusions drawn from the above, not sourced facts:
 - Breed in soil that stays too damp; springtails compete with the larvae for food; drying and ventilation are the fixes ([Highland Moss](https://highlandmoss.com/?p=180197)).
 - Estimated in code: all life-cycle timings (general entomology knowledge, unverified here) and the invasion rule.
 
+### Vampire crabs (*Geosesarma* spp.)
+
+- Small semi-terrestrial crabs from Java, kept in humid, mostly-land tanks. Keepers give 22–28 °C and 70–90% humidity ([Aquarium Source](https://www.aquariumsource.com/vampire-crab/), [Gensou](https://gensou.sg/?p=37034)), a group of 2–3 in a 40–75 L tank, a lid because they climb out, and a water dish (the same guides). Lifespan about 2–3 years ([Aquarium Source](https://www.aquariumsource.com/vampire-crab/)).
+- The female carries roughly 20–80 eggs for about a month, and they hatch as fully formed crabs ([Josh's Frogs](https://joshsfrogs.com/sp/purple-vampire-crab-geosesarma-bogorensis-captive-bred-vcpurple)); the genus is known for few, large eggs and direct development ([Zenodo genus entry](https://zenodo.org/records/4609150)). Adults eat the young, so few survive without separating them ([Shrimpy Business](https://shrimpybusiness.com/blogs/shrimpy-business-blog/breeding-vampire-crabs)).
+- They are omnivores that eat small invertebrates as well as detritus; keepers rely on springtails as live food between meals (the care guides above).
+- Estimated in code: time to adulthood (120 days; no source found), food intake, the low effective birth rate standing in for cannibalism, soil moisture preference (set to "damp", since they depend on the water dish and air humidity rather than wet soil), and the predation rate (`CONFIG.fauna.catchPerHour`, at most 1% of a springtail colony an hour, with a springtail taken as 20 µg dry). With monthly feeding a trio holds on for years in a warm 40 L case; unfed in a small jar it dies out within a year.
+
 ### Plants
 
 Recurring recommendations across guides: nerve plant, creeping fig, pilea,

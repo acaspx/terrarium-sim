@@ -56,6 +56,14 @@ export interface FaunaSpecies {
   diet: { mold: number; detritus: number; plant: number };
   /** Soft carrying capacity, individuals per litre of substrate. */
   densityPerL: number;
+  /** The smallest vessel, in litres, a keeper would house them in. */
+  minL?: number;
+  /** Climbs out of an open top. */
+  climbs?: boolean;
+  /** Dry mass of one animal, grams: what a predator gets for catching it. */
+  bodyG?: number;
+  /** Animals it hunts when the mold and litter run short. */
+  prey?: string[];
   confidence: Confidence;
   notes: string;
 }
