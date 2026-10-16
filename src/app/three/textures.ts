@@ -298,7 +298,7 @@ export function strapLeafTexture() {
   });
 }
 
-/** Isopod shells, painted onto the body. */
+/** Isopod shell patterns, painted onto the body (the plates themselves are in the model). */
 export function shellTexture(kind: 'dairy-cow' | 'magic-potion') {
   return paint(`shell-${kind}`, 128, (ctx, n) => {
     const r = rng(kind.length * 7);
@@ -312,14 +312,6 @@ export function shellTexture(kind: 'dairy-cow' | 'magic-potion') {
       if (kind === 'dairy-cow') ctx.ellipse(x, y, 8 + r() * 16, 6 + r() * 12, r() * 3, 0, Math.PI * 2);
       else ctx.arc(x, y, 1 + r() * 2, 0, Math.PI * 2);
       ctx.fill();
-    }
-    // Segment lines across the back.
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    for (let x = 6; x < n; x += 11) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, n);
-      ctx.stroke();
     }
   });
 }

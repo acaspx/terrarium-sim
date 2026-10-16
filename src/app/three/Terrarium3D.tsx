@@ -12,11 +12,12 @@ import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, ty
 import { CameraRig, type Focus, type View } from './camera.js';
 import { downgrade, useQuality, type Quality } from './quality.js';
 import { Critters } from './Critters.js';
+import { driftwoodGeometry, stoneGeometry } from './hardscape.js';
 import { q, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Placed } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
-import { clamp, fbm, hashSeed } from './noise.js';
+import { clamp, hashSeed } from './noise.js';
 import { InstancedParts } from './parts.js';
-import { BUILDERS, leafLitterGeometry, PLANT_COLORS, taperedTube, type Part } from './plants.js';
+import { BUILDERS, leafLitterGeometry, PLANT_COLORS, type Part } from './plants.js';
 import { Room } from './Room.js';
 import { barkTexture, corkTexture, lumpTexture, moldTexture, shelfTexture, soilTexture } from './textures.js';
 import { distToWall, footprint, glassGeometry, insideFp, layerGeometry, pointIn, type Shape } from './vessel.js';
@@ -564,13 +565,13 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
     const map = barkTexture().clone();
     map.repeat.set(3, 1);
     map.needsUpdate = true;
-    return new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.88 });
+    return new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.88, vertexColors: true });
   }, []);
   const wood = useMemo(() => {
     if (!spec.hardscape.includes('wood')) return null;
     const w = woodPath(L, woodPlaced);
-    const trunk = taperedTube(w.trunk, w.r0, w.r1, 32, 10);
-    const branch = taperedTube(w.branch, 0.045, 0.014, 16, 8);
+    const trunk = driftwoodGeometry(w.trunk, w.r0, w.r1);
+    const branch = driftwoodGeometry(w.branch, 0.045, 0.014, 9);
     // Where it really ended up (it is pulled back from the glass), for dragging from there.
     const mid = w.trunk.reduce((m, p) => m.add(p), new THREE.Vector3()).divideScalar(w.trunk.length);
     return { trunk, branch, x: mid.x, z: mid.z };
@@ -579,19 +580,10 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
     wood?.trunk.dispose();
     wood?.branch.dispose();
   }, [wood]);
-  const stoneShape = useMemo(() => {
-    const g = new THREE.IcosahedronGeometry(1, 4);
-    const pos = g.attributes.position as THREE.BufferAttribute;
-    const v = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i);
-      const n = fbm(v.x * 1.6 + 4, v.y * 1.6 + v.z * 1.3, 21, 4);
-      v.multiplyScalar(0.8 + 0.45 * n);
-      pos.setXYZ(i, v.x, v.y, v.z);
-    }
-    g.computeVertexNormals();
-    return { g, mat: new THREE.MeshStandardMaterial({ color: '#8e938c', roughness: 0.82, bumpMap: lumpTexture(), bumpScale: 5 }) };
-  }, []);
+  const stoneShape = useMemo(() => ({
+    g: stoneGeometry(),
+    mat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86 }),
+  }), []);
   const stonePlaced = spec.placed?.stone;
   const stone = useMemo(() => {
     if (!spec.hardscape.includes('stone')) return null;
@@ -656,13 +648,13 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
     <group ref={floor.group}>
       {wood && (
         <group position={offset('wood')} {...handlers('wood')}>
-          <mesh geometry={wood.trunk} material={woodMat} castShadow receiveShadow />
+          <mesh geometry={wood.trunk} material={woodMat} castShadow receiveShadow userData={{ hardscape: 'wood' }} />
           <mesh geometry={wood.branch} material={woodMat} castShadow receiveShadow />
         </group>
       )}
       {stone && (
         <mesh geometry={stoneShape.g} material={stoneShape.mat} position={[stone.x + offset('stone')[0], stone.y + stone.s * 0.15 + offset('stone')[1], stone.z + offset('stone')[2]]}
-          scale={[stone.s * 1.15, stone.s * 0.72, stone.s * 0.95]} rotation={[0.1, 0.6, 0]} castShadow receiveShadow {...handlers('stone')} />
+          scale={[stone.s * 1.15, stone.s * 0.72, stone.s * 0.95]} rotation={[0.1, 0.6, 0]} castShadow receiveShadow {...handlers('stone')} userData={{ hardscape: 'stone' }} />
       )}
       {drag?.what === 'wood' && wood && <DropRing L={L} x={wood.x + drag.dx} z={wood.z + drag.dz} r={0.22} />}
       {drag?.what === 'stone' && stone && <DropRing L={L} x={stone.x + drag.dx} z={stone.z + drag.dz} r={stone.s * 1.1} />}
@@ -680,19 +672,24 @@ function WaterDish({ L }: { L: Layout }) {
     return { r, x, z, y: L.ground.heightAt(x, z) };
   }, [groundFp, R, L.ground]);
   const mats = useMemo(() => ({
-    dish: new THREE.MeshStandardMaterial({ color: '#8d877d', roughness: 0.75 }),
-    water: new THREE.MeshPhysicalMaterial({ color: '#3d5a52', roughness: 0.04, transparent: true, opacity: 0.82, clearcoat: 1 }),
+    dish: new THREE.MeshStandardMaterial({ color: '#8d877d', roughness: 0.7 }),
+    // Clear, still water over a dark dish: mostly reflection.
+    water: new THREE.MeshPhysicalMaterial({ color: '#2c3f3a', roughness: 0.02, transparent: true, opacity: 0.88, clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.4 }),
   }), []);
   return (
     <group position={[d.x, d.y, d.z]}>
+      {/* A shallow bowl sunk to its rim, with a rounded lip. */}
       <mesh material={mats.dish} position={[0, 0.005, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[d.r, d.r * 0.8, 0.05, 40, 1, true]} />
+        <cylinderGeometry args={[d.r, d.r * 0.8, 0.05, 48, 1, true]} />
+      </mesh>
+      <mesh material={mats.dish} position={[0, 0.03, 0]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
+        <torusGeometry args={[d.r, 0.012, 10, 48]} />
       </mesh>
       <mesh material={mats.dish} position={[0, -0.015, 0]} receiveShadow>
-        <cylinderGeometry args={[d.r * 0.8, d.r * 0.8, 0.01, 40]} />
+        <cylinderGeometry args={[d.r * 0.8, d.r * 0.8, 0.01, 48]} />
       </mesh>
-      <mesh material={mats.water} position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[d.r * 0.97, 40]} />
+      <mesh material={mats.water} position={[0, 0.022, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[d.r * 0.98, 48]} />
       </mesh>
     </group>
   );

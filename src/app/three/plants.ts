@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { fittoniaTexture, lumpTexture, strapLeafTexture } from './textures.js';
 
 /**
@@ -339,6 +340,8 @@ function cushionMoss(p: PlantInput): Part[] {
   const h = 0.035 + 0.075 * p.s;
   const pale = new THREE.Color('#cfdac9');
   const base = tinted(p.leaf, p.health, p.rng, 0).lerp(pale, p.dry * 0.75);
+  // The mound is the shade between the shoots: darker than the shoots on top.
+  base.multiplyScalar(0.72);
   const mound = new THREE.SphereGeometry(1, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2);
   const pos = mound.attributes.position as THREE.BufferAttribute;
   const seed = p.rng() * 50;
@@ -355,7 +358,7 @@ function cushionMoss(p: PlantInput): Part[] {
     bumpMap: lumpTexture(), bumpScale: 3,
   });
   const tufts: Part['instances'] = [];
-  const n = 140 + Math.round(520 * p.s);
+  const n = 380 + Math.round(1100 * p.s);
   for (let i = 0; i < n; i++) {
     const phi = p.rng() * Math.PI * 2;
     const th = Math.acos(1 - p.rng() * 0.98);
@@ -363,9 +366,10 @@ function cushionMoss(p: PlantInput): Part[] {
     const y = Math.cos(th) * h;
     const z = Math.sin(th) * Math.sin(phi) * w;
     const nrm = new THREE.Vector3(x / (w * w), y / (h * h), z / (w * w)).normalize();
-    const c = (p.rng() < 0.7 ? p.leaf : p.accent).clone().lerp(DYING, sickness(p.health)).lerp(pale, p.dry * 0.8);
-    c.offsetHSL(0, 0, (p.rng() - 0.3) * 0.12);
-    tufts.push({ matrix: alongNormal(new THREE.Vector3(x, y, z), nrm, new THREE.Vector3(0.8 + 0.5 * p.rng(), 0.6 + 0.6 * p.rng(), 0.8 + 0.5 * p.rng()), p.rng() * 6), color: c });
+    const c = (p.rng() < 0.75 ? p.leaf : p.accent).clone().lerp(DYING, sickness(p.health)).lerp(pale, p.dry * 0.8);
+    c.offsetHSL(0, 0, (p.rng() - 0.4) * 0.1);
+    const k = 1.1 + 0.6 * p.rng();
+    tufts.push({ matrix: alongNormal(new THREE.Vector3(x, y, z), nrm, new THREE.Vector3(k, k * (0.7 + 0.6 * p.rng()), k), p.rng() * 6), color: c });
   }
   return [
     { geometry: mound, material, owned: true, ownsMaterial: true },
@@ -376,9 +380,14 @@ function cushionMoss(p: PlantInput): Part[] {
 let _tuft: THREE.BufferGeometry | null = null;
 function tuftGeometry() {
   if (!_tuft) {
-    // A short, blunt tuft: moss reads as velvet, not spines.
-    _tuft = new THREE.SphereGeometry(0.008, 6, 4);
-    _tuft.scale(1, 1.3, 1);
+    // One moss shoot: a spray of narrow pointed leaves around an upright tip. Packed
+    // together they read as a velvety mound with a fine, pointed texture.
+    const blade = (lean: number, turn: number, h: number) =>
+      new THREE.ConeGeometry(0.0022, h, 3, 1, true).translate(0, h / 2, 0).rotateX(lean).rotateY(turn);
+    const blades = [blade(0, 0, 0.013)];
+    for (let i = 0; i < 6; i++) blades.push(blade(0.55 + (i % 2) * 0.2, (i / 6) * Math.PI * 2, 0.01));
+    _tuft = mergeGeometries(blades.map((g) => g.toNonIndexed()))!;
+    _tuft.computeVertexNormals();
   }
   return _tuft;
 }
