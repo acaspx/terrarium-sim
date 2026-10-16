@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { makeRng } from '../../engine/core/math.js';
 import type { TerrariumState } from '../../engine/index.js';
-import type { Layout } from './layout.js';
+import type { Layout, Obstacle } from './layout.js';
 import { clamp, hashSeed } from './noise.js';
 import { shakeOf, useMotion } from './rig.js';
 import { critterGeometry, critterMaterials, type Body } from './critterModels.js';
@@ -45,13 +45,18 @@ export const LOOKS: Record<string, Look> = {
   'dairy-cow-isopod': { body: 'isopod', scale: [0.024, 0.012, 0.04], color: '#ffffff', limb: '#cfc9bd', shell: 'dairy-cow', speed: 0.05, rough: 0.35, motion: 'crawl', count: big(10, 2, 0.5) },
   'rubber-ducky-isopod': { body: 'isopod', scale: [0.016, 0.011, 0.024], color: '#5f5750', limb: '#4a433d', accent: '#f2c230', speed: 0.015, rough: 0.4, motion: 'crawl', count: big(8, 1.5, 0.5) },
   'magic-potion-isopod': { body: 'isopod', scale: [0.02, 0.013, 0.03], color: '#ffffff', limb: '#3a4152', shell: 'magic-potion', speed: 0.03, rough: 0.3, motion: 'crawl', rolls: true, count: big(10, 2, 0.5) },
-  'vampire-crab': { body: 'crab', scale: [0.04, 0.016, 0.03], color: '#4b2d4f', limb: '#5a2a3e', accent: '#b8344a', eye: '#f3d23c', speed: 0.04, rough: 0.35, motion: 'crawl', sideways: true, count: big(6, 1, 0.5) },
+  // True to size: a shell about 2 cm across, legs about 4 cm tip to tip.
+  'vampire-crab': { body: 'crab', scale: [0.05, 0.02, 0.038], color: '#4b2d4f', limb: '#5a2a3e', accent: '#b8344a', eye: '#f3d23c', speed: 0.04, rough: 0.35, motion: 'crawl', sideways: true, count: big(6, 1, 0.5) },
   'fungus-gnat': { body: 'gnat', scale: [0.006, 0.006, 0.009], color: '#1e1e1e', limb: '#2a2a2a', speed: 0.18, rough: 0.6, motion: 'fly', count: (p) => Math.min(12, Math.ceil(p / 12)) },
 };
 const FALLBACK: Look = { body: 'isopod', scale: [0.015, 0.009, 0.024], color: '#8a8a84', limb: '#6a6a64', speed: 0.03, rough: 0.4, motion: 'crawl', count: big(10, 2, 0.5) };
 
 /** quality low: about half the animals are drawn (the colony itself is unchanged). */
-export function Critters({ L, state, lively, quality = 'high' }: { L: Layout; state: TerrariumState; lively: boolean; quality?: 'high' | 'low' }) {
+export function Critters({ L, state, lively, quality = 'high', obstacles = [] }: {
+  L: Layout; state: TerrariumState; lively: boolean; quality?: 'high' | 'low';
+  /** Stone and water dish: start clear of them, turn away from them. */
+  obstacles?: Obstacle[];
+}) {
   const swarms = useMemo(
     () => state.fauna.map((f) => {
       const look = LOOKS[f.speciesId] ?? FALLBACK;
@@ -60,7 +65,7 @@ export function Critters({ L, state, lively, quality = 'high' }: { L: Layout; st
     }),
     [state.fauna, state.climate.lightOn, quality],
   );
-  return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} quality={quality} />)}</>;
+  return <>{swarms.map((s) => <Swarm key={s.id} id={s.id} look={s.look} n={s.n} L={L} lively={lively} quality={quality} obstacles={obstacles} />)}</>;
 }
 
 interface Bug {
@@ -69,21 +74,28 @@ interface Bug {
   flee: number;
   curl: number;
 }
+/** r is the body's half-width; legs reach about twice that, so keep them clear too. */
+const blocked = (obstacles: Obstacle[], x: number, z: number, r: number) => obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r + r * 2);
+
 /** How far a tap on the soil carries, in scene units. */
 const STARTLE_RADIUS = 0.45;
 
-function Swarm({ id, look, n, L, lively, quality }: { id: string; look: Look; n: number; L: Layout; lively: boolean; quality: 'high' | 'low' }) {
+function Swarm({ id, look, n, L, lively, quality, obstacles }: {
+  id: string; look: Look; n: number; L: Layout; lively: boolean; quality: 'high' | 'low'; obstacles: Obstacle[];
+}) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const geometry = critterGeometry(look.body, quality);
   const mats = useMemo(() => critterMaterials({ shell: look.color, limb: look.limb, accent: look.accent, eye: look.eye, rough: look.rough, map: look.shell ? shellTexture(look.shell) : null }), [look]);
   const bugs = useMemo<Bug[]>(() => {
     const r = makeRng(hashSeed(id) + n);
     return Array.from({ length: n }, () => {
-      const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      // A few tries for a spot that is not under the stone or in the dish.
+      let [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      for (let k = 0; k < 12 && blocked(obstacles, x, z, look.scale[0]); k++) [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
       const a = r() * Math.PI * 2;
       return { x, z, y: L.gy + 0.2 + r() * 0.6, h: a, t: r() * 4, vx: Math.cos(a) * 0.1, vy: 0, vz: Math.sin(a) * 0.1, phase: r() * 10, flee: 0, curl: 0 };
     });
-  }, [id, n, L]);
+  }, [id, n, L, obstacles]);
   const tmp = useMemo(() => ({
     m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(),
     s: new THREE.Vector3(...look.scale),
@@ -154,7 +166,7 @@ function Swarm({ id, look, n, L, lively, quality }: { id: string; look: Look; n:
           hop = 4 * u * (1 - u) * 0.06;
           const nx = b.x + Math.sin(b.h) * dt * 0.18;
           const nz = b.z + Math.cos(b.h) * dt * 0.18;
-          if (insideFp(fp, nx, nz)) { b.x = nx; b.z = nz; }
+          if (insideFp(fp, nx, nz) && !blocked(obstacles, nx, nz, look.scale[0])) { b.x = nx; b.z = nz; }
         }
         y = L.ground.heightAt(b.x, b.z) + 0.005 + hop;
       } else if (b.curl > now) {
@@ -167,7 +179,7 @@ function Swarm({ id, look, n, L, lively, quality }: { id: string; look: Look; n:
         b.h += Math.sin(b.phase + performance.now() / 1700) * dt * (b.flee > now ? 0.3 : 1.2);
         const nx = b.x + Math.sin(b.h) * speed * dt;
         const nz = b.z + Math.cos(b.h) * speed * dt;
-        if (insideFp(fp, nx, nz, 0.02)) { b.x = nx; b.z = nz; } else b.h += Math.PI * 0.7;
+        if (insideFp(fp, nx, nz, 0.02) && !blocked(obstacles, nx, nz, look.scale[0])) { b.x = nx; b.z = nz; } else b.h += Math.PI * 0.7;
         y = L.ground.heightAt(b.x, b.z) + look.scale[1] * 0.7;
       }
       // Crabs face across their path; the front is where the eyes and claws go.

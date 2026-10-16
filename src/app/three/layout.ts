@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import type { TerrariumSpec } from '../../engine/index.js';
+import { layoutOf, type TerrariumSpec } from '../../engine/index.js';
 import { clamp } from './noise.js';
 import { footprint, groundGeometry, insideFp, pointIn, SHAPES, type Footprint, type Shape } from './vessel.js';
 
@@ -22,20 +22,24 @@ export interface Layout {
   k: number;
 }
 
+/** Where everything sits, worked out from the design (no React; see useLayout). */
+export function layoutFor(spec: Pick<TerrariumSpec, 'vessel' | 'drainage' | 'depth' | 'seed' | 'sizeL'>): Layout {
+  const shape = SHAPES[spec.vessel];
+  const floorY = shape.kind === 'round' && shape.openBottom ? 0 : 0.03;
+  const drainTop = floorY + DRAIN_H[spec.drainage];
+  const gy = drainTop + SUB_H[spec.depth];
+  const ground = groundGeometry(shape, gy, spec.seed, 0.018);
+  return {
+    shape, floorY, drainTop, gy, ground,
+    baseY: -(BASE_H[spec.vessel] ?? 0.002),
+    groundFp: footprint(shape, gy, 0.1),
+    k: clamp(3.5 * Math.cbrt(6 / spec.sizeL), 2.1, 4.8),
+  };
+}
+
 export function useLayout(spec: TerrariumSpec): Layout {
-  return useMemo(() => {
-    const shape = SHAPES[spec.vessel];
-    const floorY = shape.kind === 'round' && shape.openBottom ? 0 : 0.03;
-    const drainTop = floorY + DRAIN_H[spec.drainage];
-    const gy = drainTop + SUB_H[spec.depth];
-    const ground = groundGeometry(shape, gy, spec.seed, 0.018);
-    return {
-      shape, floorY, drainTop, gy, ground,
-      baseY: -(BASE_H[spec.vessel] ?? 0.002),
-      groundFp: footprint(shape, gy, 0.1),
-      k: clamp(3.5 * Math.cbrt(6 / spec.sizeL), 2.1, 4.8),
-    };
-  }, [spec.vessel, spec.drainage, spec.depth, spec.seed, spec.sizeL]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => layoutFor(spec), [spec.vessel, spec.drainage, spec.depth, spec.seed, spec.sizeL]);
 }
 
 /** Round to a step, so the scene rebuilds geometry only when a change would be visible. */
@@ -116,7 +120,102 @@ export function woodPath(L: Layout, placed?: Placed) {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/** About how far the floor reaches from the middle, in scene units. */
+export const floorRadius = (L: Layout) => (L.groundFp.kind === 'circle' ? L.groundFp.r : Math.min(L.groundFp.hx, L.groundFp.hz) * 1.1);
+
+/** The stone's scale; its outline reaches about 1.45 times this from its middle. */
+export const stoneSize = (L: Layout) => 0.24 * Math.min(1, floorRadius(L));
+
+/** The crabs' water dish: front left, sunk to its rim. */
+export function dishSpot(L: Layout) {
+  return { at: pointIn(L.groundFp, -0.5, 0.42), r: 0.15 * Math.min(1, floorRadius(L)) };
+}
+
+const hasCrabs = (spec: TerrariumSpec) => spec.fauna.some((f) => f.speciesId === 'vampire-crab' && f.count > 0);
+
+/** The log and the dish: the stone must not overlap these. (Plants it may nestle against.) */
+function solid(L: Layout, spec: TerrariumSpec) {
+  const out: { at: [number, number]; r: number }[] = [];
+  if (spec.hardscape.includes('wood')) {
+    const w = woodPath(L, spec.placed?.wood);
+    for (const p of new THREE.CatmullRomCurve3(w.trunk).getPoints(12)) out.push({ at: [p.x, p.z], r: w.r0 });
+  }
+  if (hasCrabs(spec)) out.push(dishSpot(L));
+  return out;
+}
+
+const plantBases = (L: Layout, spec: TerrariumSpec) => layoutOf(spec).map((uv) => pointIn(L.groundFp, ...uv));
+
+/**
+ * Toward the viewer, on the floor: between the jar pages' straight-on view and the
+ * builder's corner view (camera.tsx), so a spot clear of both is clear of either.
+ */
+const TOWARD_VIEWER: [number, number] = [Math.sin(0.33), Math.cos(0.33)];
+
+/** How much the plants stand between a spot and the viewer. */
+function hiddenBehindPlants(bases: [number, number][], x: number, z: number) {
+  let hidden = 0;
+  for (const [px, pz] of bases) {
+    const dx = px - x;
+    const dz = pz - z;
+    const along = dx * TOWARD_VIEWER[0] + dz * TOWARD_VIEWER[1];
+    const across = Math.abs(dx * TOWARD_VIEWER[1] - dz * TOWARD_VIEWER[0]);
+    if (along > 0 && across < 0.3) hidden += 1 - across / 0.3;
+  }
+  return hidden;
+}
+
+/**
+ * Where the stone goes until someone moves it: clear of the log and the dish, as far from
+ * the plants as it can be, and not hidden behind a plant from where people look.
+ */
+export function stoneHome(L: Layout, spec: TerrariumSpec): [number, number] {
+  const hard = solid(L, spec);
+  const bases = plantBases(L, spec);
+  const r = stoneSize(L) * 1.45;
+  let best: [number, number] = [0.55, 0.05];
+  let bestScore = -Infinity;
+  for (let u = -0.8; u <= 0.81; u += 0.1) {
+    for (let v = -0.8; v <= 0.81; v += 0.1) {
+      const [x, z] = pointIn(L.groundFp, u, v);
+      if (!insideFp(L.groundFp, x, z, r)) continue;
+      // Overlapping the log or the dish costs far more than anything else, so on a crowded
+      // floor the stone still takes the least bad spot rather than none.
+      const overlap = Math.max(0, ...hard.map((t) => t.r + r - Math.hypot(x - t.at[0], z - t.at[1])));
+      // Room from the plant bases, worth less than being seen: a stone among plants looks natural.
+      const room = Math.min(0.25, ...bases.map(([px, pz]) => Math.hypot(x - px, z - pz) - 0.12 - r));
+      const score = room - 0.5 * hiddenBehindPlants(bases, x, z) + 0.04 * v - 4 * overlap;
+      if (score > bestScore) {
+        bestScore = score;
+        best = [u, v];
+      }
+    }
+  }
+  return best;
+}
+
 /** Where the stone sits, in scene x, z. */
-export function stoneSpot(L: Layout, placed?: Placed): [number, number] {
-  return pointIn(L.groundFp, ...(placed?.at ?? [0.55, 0.05]));
+export function stoneSpot(L: Layout, spec: TerrariumSpec): [number, number] {
+  return pointIn(L.groundFp, ...(spec.placed?.stone?.at ?? stoneHome(L, spec)));
+}
+
+/** Ground-level things the animals walk around: x, z and radius in scene units. */
+export interface Obstacle {
+  x: number;
+  z: number;
+  r: number;
+}
+
+export function obstaclesFor(L: Layout, spec: TerrariumSpec): Obstacle[] {
+  const out: Obstacle[] = [];
+  if (spec.hardscape.includes('stone')) {
+    const [x, z] = stoneSpot(L, spec);
+    // Measured: the stone's outline reaches about 1.45 times its size from the middle.
+    out.push({ x, z, r: stoneSize(L) * 1.45 });
+  }
+  if (hasCrabs(spec)) {
+    const d = dishSpot(L);
+    out.push({ x: d.at[0], z: d.at[1], r: d.r + 0.02 });
+  }
+  return out;
 }

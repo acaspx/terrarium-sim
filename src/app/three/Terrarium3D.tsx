@@ -13,7 +13,7 @@ import { CameraRig, type Focus, type View } from './camera.js';
 import { downgrade, useQuality, type Quality } from './quality.js';
 import { Critters } from './Critters.js';
 import { driftwoodGeometry, stoneGeometry } from './hardscape.js';
-import { q, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Placed } from './layout.js';
+import { dishSpot, obstaclesFor, q, stoneSize, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Obstacle, type Placed } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
 import { clamp, hashSeed } from './noise.js';
 import { InstancedParts } from './parts.js';
@@ -99,6 +99,10 @@ export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion
   const mold = clamp(state.pools.moldG / (2 * visibleMold));
   const litter = spec.hardscape.includes('leaf-litter') ? clamp(state.pools.detritusG / (state.container.substrateL * 9)) : 0;
   const ppfd = state.container.light.ppfd;
+  // The stone and the water dish: animals start clear of them and walk around them.
+  const obstacles = useMemo<Obstacle[]>(() => obstaclesFor(L, spec),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [L, spec.hardscape, spec.plants, spec.placed, spec.fauna, spec.seed]);
 
   return (
     <>
@@ -116,7 +120,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion
         <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} wood={spec.placed?.wood} />
         <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
         <Mold L={L} amount={q(mold, 0.05)} />
-        <Critters L={L} state={state} lively={lively} quality={quality} />
+        <Critters L={L} state={state} lively={lively} quality={quality} obstacles={obstacles} />
         <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} quality={quality} />
       </JarRig>
     </>
@@ -559,7 +563,6 @@ const WOOD_TURN = Math.PI / 4;
 
 function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPlace?: Terrarium3DProps['onPlace'] }) {
   const { groundFp } = L;
-  const R = groundFp.kind === 'circle' ? groundFp.r : Math.min(groundFp.hx, groundFp.hz) * 1.1;
   const woodPlaced = spec.placed?.wood;
   const woodMat = useMemo(() => {
     const map = barkTexture().clone();
@@ -584,13 +587,13 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
     g: stoneGeometry(),
     mat: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86 }),
   }), []);
-  const stonePlaced = spec.placed?.stone;
+  // Unmoved, the stone finds the most open spot, so it depends on what else is on the floor.
   const stone = useMemo(() => {
     if (!spec.hardscape.includes('stone')) return null;
-    const s = 0.24 * Math.min(1, R);
-    const [x, z] = stoneSpot(L, stonePlaced);
-    return { s, x, z, y: L.ground.heightAt(x, z) };
-  }, [spec.hardscape, R, L, stonePlaced]);
+    const [x, z] = stoneSpot(L, spec);
+    return { s: stoneSize(L), x, z, y: L.ground.heightAt(x, z) };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [L, spec.hardscape, spec.plants, spec.placed, spec.fauna, spec.seed]);
 
   // Dragging: the piece follows the pointer and is rebuilt in its new spot once dropped.
   const motion = useMotion();
@@ -664,13 +667,10 @@ function Hardscape({ L, spec, onPlace }: { L: Layout; spec: TerrariumSpec; onPla
 
 /** Crabs need water to drink and to wet their gills; keepers sink a shallow dish into the soil. */
 function WaterDish({ L }: { L: Layout }) {
-  const { groundFp } = L;
-  const R = groundFp.kind === 'circle' ? groundFp.r : Math.min(groundFp.hx, groundFp.hz) * 1.1;
   const d = useMemo(() => {
-    const r = 0.15 * Math.min(1, R);
-    const [x, z] = pointIn(groundFp, -0.5, 0.42);
+    const { at: [x, z], r } = dishSpot(L);
     return { r, x, z, y: L.ground.heightAt(x, z) };
-  }, [groundFp, R, L.ground]);
+  }, [L]);
   const mats = useMemo(() => ({
     dish: new THREE.MeshStandardMaterial({ color: '#8d877d', roughness: 0.7 }),
     // Clear, still water over a dark dish: mostly reflection.
