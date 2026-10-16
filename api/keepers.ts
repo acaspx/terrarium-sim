@@ -1,10 +1,5 @@
 /** Vercel function for keepers (usernames). Storage: see api/terrariums.ts. */
-import { handle, optionsFromEnv, storeFromEnv } from '../src/playground/server.js';
+import { serve } from '../src/playground/server.js';
 
-const store = storeFromEnv(process.env);
-const options = optionsFromEnv(process.env);
-
-export async function GET(request: Request) {
-  return handle(request, await store, options);
-}
+export const GET = serve(process.env);
 export const POST = GET;

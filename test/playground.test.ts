@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTerrarium, RECIPES, run, type TerrariumSpec } from '../src/engine/index.js';
 import { isOffensive, usernameProblem } from '../src/playground/moderation.js';
 import { conformState, validateSpec } from '../src/playground/schema.js';
-import { handle, memoryStore, newRecoveryCode, normaliseCode, storageConfig } from '../src/playground/server.js';
+import { handle, memoryStore, newRecoveryCode, normaliseCode, redisStore, storageConfig, type PlaygroundStore } from '../src/playground/server.js';
 
 type Store = ReturnType<typeof memoryStore>;
 const spec = (): TerrariumSpec => structuredClone(RECIPES[0]!.spec);
@@ -208,24 +208,20 @@ describe('following', () => {
 });
 
 describe('storage settings', () => {
-  it('finds the Upstash REST address and token under any of the names deployments use', () => {
-    expect(storageConfig({ KV_REST_API_URL: 'https://a.upstash.io', KV_REST_API_TOKEN: 't' })).toMatchObject({ url: 'https://a.upstash.io', token: 't' });
-    expect(storageConfig({ UPSTASH_REDIS_REST_URL: 'https://b.upstash.io', UPSTASH_REDIS_REST_TOKEN: 'u' })).toMatchObject({ url: 'https://b.upstash.io' });
-    // Vercel prefixes the names when asked to.
-    expect(storageConfig({ STORAGE_KV_REST_API_URL: 'https://c.upstash.io', STORAGE_KV_REST_API_TOKEN: 'v', STORAGE_KV_REST_API_READ_ONLY_TOKEN: 'r' }))
-      .toMatchObject({ url: 'https://c.upstash.io', token: 'v', from: 'STORAGE_KV_REST_API_URL' });
-    // Only a redis:// URL: an Upstash one carries its REST token as the password.
-    expect(storageConfig({ REDIS_URL: 'rediss://default:p%40ss@d-1.upstash.io:6379' })).toEqual({ url: 'https://d-1.upstash.io', token: 'p@ss', from: 'REDIS_URL' });
+  it('finds the database under any of the names deployments use', () => {
+    expect(storageConfig({ REDIS_URL: 'redis://default:pw@redis-1.cloud.redislabs.com:1234' })).toEqual({ url: 'redis://default:pw@redis-1.cloud.redislabs.com:1234', from: 'REDIS_URL' });
+    expect(storageConfig({ STORAGE_KV_URL: 'rediss://default:pw@a.upstash.io:6379' })).toMatchObject({ from: 'STORAGE_KV_URL' });
+    // Upstash's REST address and token name the same database; the token is its password.
+    expect(storageConfig({ KV_REST_API_URL: 'https://a-1.upstash.io', KV_REST_API_TOKEN: 't/k=' })).toEqual({ url: 'rediss://default:t%2Fk%3D@a-1.upstash.io:6379', from: 'KV_REST_API_URL' });
+    expect(storageConfig({ STORAGE_UPSTASH_REDIS_REST_URL: 'https://b.upstash.io', STORAGE_UPSTASH_REDIS_REST_TOKEN: 'u' })).toMatchObject({ url: 'rediss://default:u@b.upstash.io:6379' });
   });
 
   it('says what it found, by name only, when it cannot connect', () => {
     const none = storageConfig({ PATH: '/bin' });
     expect('problem' in none && none.problem).toMatch(/no storage settings/);
-    const other = storageConfig({ REDIS_URL: 'redis://default:secret@redis-123.cloud.redislabs.com:1234' });
-    expect('problem' in other && other.problem).toMatch(/REDIS_URL does not point to Upstash/);
-    expect(JSON.stringify(other)).not.toContain('secret');
-    const half = storageConfig({ KV_REST_API_URL: 'https://a.upstash.io' });
-    expect('problem' in half && half.problem).toMatch(/Found KV_REST_API_URL, but no matching/);
+    const half = storageConfig({ KV_REST_API_URL: 'https://a.upstash.io', REDIS_URL: 'not a url secret' });
+    expect('problem' in half && half.problem).toMatch(/Found KV_REST_API_URL, REDIS_URL, but no redis:\/\/ address/);
+    expect(JSON.stringify(half)).not.toContain('secret');
   });
 
   it('explains the missing store in the error', async () => {
@@ -305,5 +301,85 @@ describe('link previews', () => {
     expect(await (await handle(new Request(`http://x/s/${item.id}`), store)).text()).toContain(`by @ana`);
     // Without storage it still opens the app.
     expect(await (await handle(new Request('http://x/api/share?id=nope'), null)).text()).toContain('/#/community');
+  });
+});
+
+/**
+ * The same behaviour from both stores. Real Redis runs when REDIS_TEST_URL is set, e.g.
+ * REDIS_TEST_URL=redis://localhost:6390 npx vitest run (the database there is emptied).
+ */
+const stores: [string, () => Promise<PlaygroundStore>][] = [['memory', async () => memoryStore()]];
+const redisUrl = process.env.REDIS_TEST_URL;
+if (redisUrl) {
+  stores.push(['redis', async () => {
+    const { createClient } = await import('redis');
+    const c = createClient({ url: redisUrl });
+    await c.connect();
+    await c.flushDb();
+    await c.quit();
+    return redisStore(redisUrl);
+  }]);
+}
+
+describe.each(stores)('%s store', (_, make) => {
+  const sub = (id: string, keeper: string, createdAt: number) =>
+    ({ ...JSON.parse(JSON.stringify({ id, keeper, createdAt, likes: 0, day: 1, note: '', spec: spec(), state: { hour: 0 } })) });
+
+  it('keeps jars newest first, by keeper, liked once per voter, and removes them', async () => {
+    const s = await make();
+    await s.put(sub('aaaaaa', 'ana', 1));
+    await s.put(sub('bbbbbb', 'bob', 2));
+    await s.put(sub('cccccc', 'ana', 3));
+    expect((await s.list('recent', 0, 10)).map((x) => x.id)).toEqual(['cccccc', 'bbbbbb', 'aaaaaa']);
+    expect((await s.list('recent', 1, 1)).map((x) => x.id)).toEqual(['bbbbbb']);
+    expect((await s.listByKeeper('ana', 0, 10)).map((x) => x.id)).toEqual(['cccccc', 'aaaaaa']);
+    expect(await s.countByKeeper('ana')).toBe(2);
+    expect(await s.like('aaaaaa', 'v1')).toBe(1);
+    expect(await s.like('aaaaaa', 'v1')).toBe(1);
+    expect(await s.like('aaaaaa', 'v2')).toBe(2);
+    expect(await s.like('nothere', 'v1')).toBeNull();
+    expect((await s.list('liked', 0, 1))[0]).toMatchObject({ id: 'aaaaaa', likes: 2 });
+    expect((await s.get('aaaaaa'))?.likes).toBe(2);
+    expect(await s.remove('aaaaaa', 'bob')).toBe(false);
+    expect(await s.remove('aaaaaa', 'ana')).toBe(true);
+    expect(await s.get('aaaaaa')).toBeNull();
+    expect(await s.countByKeeper('ana')).toBe(1);
+  });
+
+  it('hides a jar after enough reports', async () => {
+    const s = await make();
+    await s.put(sub('aaaaaa', 'ana', 1));
+    expect(await s.report('aaaaaa', 'v1')).toBe(false);
+    expect(await s.report('aaaaaa', 'v2')).toBe(false);
+    expect(await s.report('aaaaaa', 'v3')).toBe(true);
+    expect(await s.list('recent', 0, 10)).toEqual([]);
+  });
+
+  it('keeps keepers, names once, bans, cards, follows and the feed', async () => {
+    const s = await make();
+    expect(await s.createKeeper({ name: 'ana', createdAt: 1, keyHash: 'h' })).toBe(true);
+    expect(await s.createKeeper({ name: 'ana', createdAt: 2, keyHash: 'x' })).toBe(false);
+    expect(await s.getKeeper('ana')).toEqual({ name: 'ana', createdAt: 1, keyHash: 'h' });
+    await s.createKeeper({ name: 'bob', createdAt: 1, keyHash: 'h' });
+    await s.put(sub('aaaaaa', 'bob', 1));
+    await s.put(sub('bbbbbb', 'cy', 2));
+    await s.put(sub('cccccc', 'bob', 3));
+    await s.follow('ana', 'bob');
+    await s.follow('ana', 'cy');
+    expect(await s.following('ana')).toEqual(['bob', 'cy']);
+    expect(await s.followerCount('bob')).toBe(1);
+    expect((await s.feed(['bob', 'cy'], 0, 2)).map((x) => x.id)).toEqual(['cccccc', 'bbbbbb']);
+    expect((await s.feed(['bob', 'cy'], 2, 2)).map((x) => x.id)).toEqual(['aaaaaa']);
+    await s.unfollow('ana', 'cy');
+    expect(await s.following('ana')).toEqual(['bob']);
+    await s.setCard('aaaaaa', 'QUJD');
+    expect(await s.getCard('aaaaaa')).toBe('QUJD');
+    await s.ban('bob');
+    expect((await s.getKeeper('bob'))?.banned).toBe(true);
+    expect(await s.listByKeeper('bob', 0, 10)).toEqual([]);
+    expect(await s.getCard('aaaaaa')).toBeNull();
+    expect(await s.allow('k', 2, 60)).toBe(true);
+    expect(await s.allow('k', 2, 60)).toBe(true);
+    expect(await s.allow('k', 2, 60)).toBe(false);
   });
 });

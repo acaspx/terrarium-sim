@@ -83,118 +83,107 @@ const FOLLOWS_PER_HOUR = 120;
 
 // ------------------------------------------------------------------ redis
 
-/** Upstash Redis over REST (Vercel's Redis integration sets these variables). */
-export async function redisStore(url: string, token: string): Promise<PlaygroundStore> {
-  const { Redis } = await import('@upstash/redis');
-  const r = new Redis({ url, token });
+/** Any Redis over its standard protocol: Redis Cloud, Upstash, or one running locally. Values are JSON. */
+export async function redisStore(url: string): Promise<PlaygroundStore> {
+  const { createClient } = await import('redis');
+  const r = createClient({ url, socket: { connectTimeout: 5000 } });
+  r.on('error', (e) => console.error('Redis', e));
+  await r.connect();
+  const getJson = async <T>(key: string) => {
+    const v = await r.get(key);
+    return v === null ? null : (JSON.parse(v) as T);
+  };
   const item = (id: string) => `tr:item:${id}`;
   const by = (name: string) => `tr:by:${name}`;
-  const withLikes = async (subs: (Submission | null)[]) => {
-    const found = subs.filter((s): s is Submission => !!s);
-    if (found.length === 0) return [];
-    const p = r.pipeline();
-    for (const s of found) p.zscore('tr:liked', s.id);
-    const likes = (await p.exec()) as (number | null)[];
-    return found.map((s, i) => ({ ...s, likes: Number(likes[i] ?? 0) }));
+  const fetch = async (ids: string[]) => {
+    if (ids.length === 0) return [];
+    const m = r.multi().mGet(ids.map(item));
+    for (const id of ids) m.zScore('tr:liked', id);
+    const [subs, ...likes] = (await m.exec()) as unknown as [(string | null)[], ...(number | null)[]];
+    return subs.flatMap((raw, i) => (raw ? [{ ...(JSON.parse(raw) as Submission), likes: Number(likes[i] ?? 0) }] : []));
   };
-  const fetch = async (ids: string[]) => (ids.length ? withLikes(await r.mget<(Submission | null)[]>(...ids.map(item))) : []);
-  const unlist = async (id: string, keeper: string) => {
-    const p = r.pipeline();
-    p.zrem('tr:recent', id);
-    p.zrem('tr:liked', id);
-    p.zrem(by(keeper), id);
-    await p.exec();
-  };
+  const unlist = (id: string, keeper: string) => r.multi().zRem('tr:recent', id).zRem('tr:liked', id).zRem(by(keeper), id).exec();
   const remove = async (id: string, keeper: string | null) => {
-    const sub = await r.get<Submission>(item(id));
+    const sub = await getJson<Submission>(item(id));
     if (!sub || (keeper !== null && sub.keeper !== keeper)) return false;
-    await r.del(item(id), `tr:voters:${id}`, `tr:reports:${id}`, `tr:card:${id}`);
+    await r.del([item(id), `tr:voters:${id}`, `tr:reports:${id}`, `tr:card:${id}`]);
     await unlist(id, sub.keeper);
     return true;
   };
+  const newest = (key: string, offset: number, limit: number) => r.zRange(key, offset, offset + limit - 1, { REV: true });
   return {
     async list(sort, offset, limit) {
-      return fetch(await r.zrange<string[]>(sort === 'liked' ? 'tr:liked' : 'tr:recent', offset, offset + limit - 1, { rev: true }));
+      return fetch(await newest(sort === 'liked' ? 'tr:liked' : 'tr:recent', offset, limit));
     },
     async listByKeeper(name, offset, limit) {
-      return fetch(await r.zrange<string[]>(by(name), offset, offset + limit - 1, { rev: true }));
+      return fetch(await newest(by(name), offset, limit));
     },
     async countByKeeper(name) {
-      return r.zcard(by(name));
+      return r.zCard(by(name));
     },
     async get(id) {
-      const s = await r.get<Submission>(item(id));
-      return s ? (await withLikes([s]))[0]! : null;
+      return (await fetch([id]))[0] ?? null;
     },
     async put(sub) {
-      const p = r.pipeline();
-      p.set(item(sub.id), sub);
-      p.zadd('tr:recent', { score: sub.createdAt, member: sub.id });
-      p.zadd('tr:liked', { score: 0, member: sub.id });
-      p.zadd(by(sub.keeper), { score: sub.createdAt, member: sub.id });
-      await p.exec();
+      await r.multi()
+        .set(item(sub.id), JSON.stringify(sub))
+        .zAdd('tr:recent', { score: sub.createdAt, value: sub.id })
+        .zAdd('tr:liked', { score: 0, value: sub.id })
+        .zAdd(by(sub.keeper), { score: sub.createdAt, value: sub.id })
+        .exec();
     },
     async like(id, voter) {
       if (!(await r.exists(item(id)))) return null;
-      const added = await r.sadd(`tr:voters:${id}`, voter);
-      if (added) return Number(await r.zincrby('tr:liked', 1, id));
-      return Number((await r.zscore('tr:liked', id)) ?? 0);
+      if (await r.sAdd(`tr:voters:${id}`, voter)) return Number(await r.zIncrBy('tr:liked', 1, id));
+      return Number((await r.zScore('tr:liked', id)) ?? 0);
     },
     async report(id, voter) {
-      const sub = await r.get<Submission>(item(id));
+      const sub = await getJson<Submission>(item(id));
       if (!sub) return false;
-      await r.sadd(`tr:reports:${id}`, voter);
-      if ((await r.scard(`tr:reports:${id}`)) < REPORTS_TO_HIDE) return false;
+      await r.sAdd(`tr:reports:${id}`, voter);
+      if ((await r.sCard(`tr:reports:${id}`)) < REPORTS_TO_HIDE) return false;
       await unlist(id, sub.keeper);
       return true;
     },
     remove,
     async ban(name) {
-      const k = await r.get<Keeper>(`tr:keeper:${name}`);
+      const k = await getJson<Keeper>(`tr:keeper:${name}`);
       if (!k) return;
-      await r.set(`tr:keeper:${name}`, { ...k, banned: true });
-      for (const id of await r.zrange<string[]>(by(name), 0, -1)) await remove(String(id), null);
+      await r.set(`tr:keeper:${name}`, JSON.stringify({ ...k, banned: true }));
+      for (const id of await r.zRange(by(name), 0, -1)) await remove(id, null);
     },
     async setCard(id, base64) {
       await r.set(`tr:card:${id}`, base64);
     },
     async getCard(id) {
-      return r.get<string>(`tr:card:${id}`);
+      return r.get(`tr:card:${id}`);
     },
     async createKeeper(k) {
-      return (await r.set(`tr:keeper:${k.name}`, k, { nx: true })) === 'OK';
+      return (await r.set(`tr:keeper:${k.name}`, JSON.stringify(k), { condition: 'NX' })) === 'OK';
     },
     async getKeeper(name) {
-      return r.get<Keeper>(`tr:keeper:${name}`);
+      return getJson<Keeper>(`tr:keeper:${name}`);
     },
     async follow(follower, name) {
-      const p = r.pipeline();
-      p.sadd(`tr:following:${follower}`, name);
-      p.sadd(`tr:followers:${name}`, follower);
-      await p.exec();
+      await r.multi().sAdd(`tr:following:${follower}`, name).sAdd(`tr:followers:${name}`, follower).exec();
     },
     async unfollow(follower, name) {
-      const p = r.pipeline();
-      p.srem(`tr:following:${follower}`, name);
-      p.srem(`tr:followers:${name}`, follower);
-      await p.exec();
+      await r.multi().sRem(`tr:following:${follower}`, name).sRem(`tr:followers:${name}`, follower).exec();
     },
     async following(name) {
-      return (await r.smembers(`tr:following:${name}`)).sort();
+      return (await r.sMembers(`tr:following:${name}`)).sort();
     },
     async followerCount(name) {
-      return r.scard(`tr:followers:${name}`);
+      return r.sCard(`tr:followers:${name}`);
     },
     async feed(names, offset, limit) {
       if (names.length === 0) return [];
       // The newest offset+limit of each shelf is enough to find the newest offset+limit overall.
-      const p = r.pipeline();
-      for (const n of names) p.zrange(by(n), 0, offset + limit - 1, { rev: true, withScores: true });
-      const shelves = (await p.exec()) as (string | number)[][];
-      const all: { id: string; at: number }[] = [];
-      for (const flat of shelves) for (let i = 0; i + 1 < flat.length; i += 2) all.push({ id: String(flat[i]), at: Number(flat[i + 1]) });
-      all.sort((a, b) => b.at - a.at);
-      return fetch(all.slice(offset, offset + limit).map((e) => e.id));
+      const m = r.multi();
+      for (const n of names) m.zRangeWithScores(by(n), 0, offset + limit - 1, { REV: true });
+      const shelves = (await m.exec()) as unknown as { value: string; score: number }[][];
+      const all = shelves.flat().sort((a, b) => b.score - a.score);
+      return fetch(all.slice(offset, offset + limit).map((e) => e.value));
     },
     async allow(key, limit, windowS) {
       const k = `tr:rl:${key}:${Math.floor(Date.now() / 1000 / windowS)}`;
@@ -573,36 +562,32 @@ export async function handle(req: Request, store: PlaygroundStore | null, opts: 
 }
 
 type Env = Record<string, string | undefined>;
-export type StorageConfig = { url: string; token: string; from: string } | { problem: string };
+export type StorageConfig = { url: string; from: string } | { problem: string };
 
 /**
- * Finds the Upstash REST address and token, under whichever names the deployment has them:
- * KV_REST_API_URL/TOKEN (Vercel's integration), UPSTASH_REDIS_REST_URL/TOKEN (Upstash's own),
- * either with a prefix (Vercel adds one when it was asked to), or else an Upstash redis:// URL,
- * whose password is also its REST token.
+ * Finds the database, under whichever names the deployment has it: a redis:// address
+ * (REDIS_URL, KV_URL, or either with a prefix), or else Upstash's REST address and token
+ * (KV_REST_API_URL/TOKEN or UPSTASH_REDIS_REST_URL/TOKEN, maybe prefixed), which name the
+ * same database: the token is its password.
  */
 export function storageConfig(env: Env): StorageConfig {
-  const names = Object.keys(env).filter((k) => env[k]);
+  const names = Object.keys(env).filter((k) => env[k]).sort();
+  const direct = names.find((k) => /(^|_)(REDIS_URL|KV_URL)$/.test(k) && /^rediss?:\/\//.test(env[k]!));
+  if (direct) return { url: env[direct]!, from: direct };
   for (const suffix of ['KV_REST_API', 'UPSTASH_REDIS_REST']) {
-    const urlKey = [`${suffix}_URL`, ...names.filter((k) => k.endsWith(`_${suffix}_URL`)).sort()].find((k) => env[k] && env[k.replace(/_URL$/, '_TOKEN')]);
-    if (urlKey) return { url: env[urlKey]!, token: env[urlKey.replace(/_URL$/, '_TOKEN')]!, from: urlKey };
-  }
-  const redisKeys = names.filter((k) => /(^|_)(REDIS_URL|KV_URL)$/.test(k)).sort();
-  for (const k of redisKeys) {
+    const urlKey = names.find((k) => (k === `${suffix}_URL` || k.endsWith(`_${suffix}_URL`)) && env[k.replace(/_URL$/, '_TOKEN')]);
+    if (!urlKey) continue;
     try {
-      const u = new URL(env[k]!);
-      if (/^rediss?:$/.test(u.protocol) && u.hostname.endsWith('.upstash.io') && u.password) {
-        return { url: `https://${u.hostname}`, token: decodeURIComponent(u.password), from: k };
-      }
+      const host = new URL(env[urlKey]!).hostname;
+      return { url: `rediss://default:${encodeURIComponent(env[urlKey.replace(/_URL$/, '_TOKEN')]!)}@${host}:6379`, from: urlKey };
     } catch {
       // Not a URL; reported below.
     }
   }
   // Names only, never values: enough to tell what the deployment was given.
-  const seen = names.filter((k) => /KV|REDIS|UPSTASH/i.test(k)).sort();
-  if (seen.length === 0) return { problem: 'This deployment has no storage settings. Connect an Upstash Redis database to the project, for Production too, then redeploy.' };
-  if (redisKeys.length) return { problem: `Found ${seen.join(', ')}, but no Upstash REST address and token, and ${redisKeys.join(', ')} does not point to Upstash. The shelf needs an Upstash Redis database.` };
-  return { problem: `Found ${seen.join(', ')}, but no matching REST address and token pair.` };
+  const seen = names.filter((k) => /KV|REDIS|UPSTASH/i.test(k));
+  if (seen.length === 0) return { problem: 'This deployment has no storage settings. Connect a Redis database to the project, for Production too, then redeploy.' };
+  return { problem: `Found ${seen.join(', ')}, but no redis:// address, and no REST address and token pair.` };
 }
 
 /** Handler options from the environment: why storage is missing, and who moderates. */
@@ -611,8 +596,28 @@ export function optionsFromEnv(env: Env): HandleOptions {
   return { why: 'problem' in c ? c.problem : undefined, moderators: (env.MODERATORS ?? '').split(/[\s,]+/) };
 }
 
-/** The store configured by the environment, or null (with the reason) when there is none. */
+/** The store configured by the environment, or null when there is none. */
 export async function storeFromEnv(env: Env): Promise<PlaygroundStore | null> {
   const c = storageConfig(env);
-  return 'url' in c ? redisStore(c.url, c.token) : null;
+  return 'url' in c ? redisStore(c.url) : null;
+}
+
+/** A Vercel function's handler: one connection per instance, made again if making it failed. */
+export function serve(env: Env) {
+  const options = optionsFromEnv(env);
+  let store: Promise<PlaygroundStore | null> | null = null;
+  return async (req: Request) => {
+    store ??= storeFromEnv(env).catch((e: unknown) => {
+      store = null;
+      throw e;
+    });
+    let ready: PlaygroundStore | null;
+    try {
+      ready = await store;
+    } catch (e) {
+      console.error(e);
+      return problem(503, 'Could not reach the community shelf. Try again in a moment.');
+    }
+    return handle(req, ready, options);
+  };
 }
