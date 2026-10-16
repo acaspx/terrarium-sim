@@ -183,6 +183,23 @@ describe('following', () => {
     expect((await follow(store, bob, 'nobody')).status).toBe(404);
   });
 
+  it('deletes your own account: jars, follows and name, which is free again', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    await share(store, ana);
+    await follow(store, ana, 'bob');
+    await follow(store, bob, 'ana');
+    expect((await call(store, 'DELETE', '', undefined, {}, 'keepers')).status).toBe(401);
+    expect((await call(store, 'DELETE', '', undefined, as({ name: 'ana', key: newRecoveryCode() }), 'keepers')).status).toBe(401);
+    expect((await call(store, 'DELETE', '', undefined, as(ana), 'keepers')).status).toBe(200);
+    expect((await (await call(store, 'GET', '?sort=recent')).json()).items).toEqual([]);
+    expect((await (await call(store, 'GET', '?name=bob', undefined, {}, 'keepers')).json()).followers).toBe(0);
+    expect((await (await call(store, 'GET', '?action=following', undefined, as(bob), 'keepers')).json()).names).toEqual([]);
+    expect((await share(store, ana)).status).toBe(401);
+    expect((await claim(store, 'ana')).res.status).toBe(201);
+  });
+
   it('needs a keeper, with the right code, to follow or to see who they follow', async () => {
     const store = memoryStore();
     await claim(store, 'ana');
@@ -380,6 +397,14 @@ describe.each(stores)('%s store', (_, make) => {
     expect((await s.getKeeper('bob'))?.banned).toBe(true);
     expect(await s.listByKeeper('bob', 0, 10)).toEqual([]);
     expect(await s.getCard('aaaaaa')).toBeNull();
+    await s.createKeeper({ name: 'cy', createdAt: 1, keyHash: 'h' });
+    await s.follow('cy', 'ana');
+    await s.follow('ana', 'cy');
+    await s.deleteKeeper('cy');
+    expect(await s.getKeeper('cy')).toBeNull();
+    expect(await s.listByKeeper('cy', 0, 10)).toEqual([]);
+    expect(await s.following('ana')).toEqual(['bob']);
+    expect(await s.followerCount('ana')).toBe(0);
     expect(await s.allow('k', 2, 60)).toBe(true);
     expect(await s.allow('k', 2, 60)).toBe(true);
     expect(await s.allow('k', 2, 60)).toBe(false);

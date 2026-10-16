@@ -6,7 +6,7 @@ import {
 import { Jar3D } from '../jar/Jar3D.js';
 import { glassWord, headline, moistureWord, pHWord, plural, pluralName, soilAirWord } from '../format.js';
 import {
-  ban, getKeeper, getShared, hasLiked, like, listByKeeper, listFollowingFeed, listShared, plantCopy, report, setFollow, shareLink, signOut,
+  ban, deleteAccount, getKeeper, getShared, hasLiked, like, listByKeeper, listFollowingFeed, listShared, plantCopy, report, setFollow, shareLink, signOut,
   unshare, useFollowing, useIdentity, useModerator,
   type KeeperProfile, type Submission,
 } from '../playground.js';
@@ -279,7 +279,17 @@ function FollowingList() {
 export function KeeperPage() {
   const me = useIdentity();
   const [reveal, setReveal] = useState(false);
-  const [confirmOut, setConfirmOut] = useState(false);
+  const [confirmOut, setConfirmOut] = useState<'out' | 'delete' | false>(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const onDelete = async () => {
+    try {
+      await deleteAccount();
+      setConfirmOut(false);
+      setJoining(true);
+    } catch (e) {
+      setDeleteError((e as Error).message);
+    }
+  };
   // Stay on the form until a new keeper has saved their recovery code.
   const [joining, setJoining] = useState(!me);
   return (
@@ -301,15 +311,26 @@ export function KeeperPage() {
             </div>
           )}
           <section className="block manage">
-            {confirmOut ? (
+            {confirmOut === 'out' ? (
               <span className="confirm">
                 You will need your recovery code to sign back in.
                 <button type="button" className="button danger" onClick={() => { signOut(); setConfirmOut(false); setJoining(true); }}>Sign out</button>
                 <button type="button" className="button quiet" onClick={() => setConfirmOut(false)}>Stay signed in</button>
               </span>
+            ) : confirmOut === 'delete' ? (
+              <span className="confirm">
+                Delete @{me.name}? Your shared jars leave the community shelf, your follows go, and the name becomes free for anyone.
+                Jars on your own shelf stay in this browser.
+                <button type="button" className="button danger" onClick={onDelete}>Delete account</button>
+                <button type="button" className="button quiet" onClick={() => setConfirmOut(false)}>Keep it</button>
+              </span>
             ) : (
-              <button type="button" className="button quiet" onClick={() => setConfirmOut(true)}>Sign out</button>
+              <>
+                <button type="button" className="button quiet" onClick={() => setConfirmOut('out')}>Sign out</button>
+                <button type="button" className="button quiet" onClick={() => setConfirmOut('delete')}>Delete account</button>
+              </>
             )}
+            {deleteError && <span className="hint" role="alert">{deleteError}</span>}
           </section>
         </>
       ) : (

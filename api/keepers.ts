@@ -3,3 +3,4 @@ import { serve } from '../src/playground/server.js';
 
 export const GET = serve(process.env);
 export const POST = GET;
+export const DELETE = GET;

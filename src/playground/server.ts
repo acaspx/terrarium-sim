@@ -18,6 +18,7 @@
  *   POST   /api/terrariums?id=ID&action=card             { image } a JPEG preview card     (its keeper only)
  *   GET    /api/terrariums?id=ID&card=1                  the preview card
  *   POST   /api/keepers?action=ban                       { name } removes all their jars   (moderators only)
+ *   DELETE /api/keepers                                  delete your account and its jars  (keeper only)
  *   GET    /api/share?id=ID   (served at /s/ID)          a page with link-preview tags that opens the jar
  *
  * Moderators are the usernames listed in the MODERATORS environment variable.
@@ -54,6 +55,8 @@ export interface PlaygroundStore {
   remove(id: string, keeper: string | null): Promise<boolean>;
   /** Marks the keeper banned and removes all their jars. */
   ban(name: string): Promise<void>;
+  /** Removes the keeper, their jars and their follows; the name is free again. */
+  deleteKeeper(name: string): Promise<void>;
   /** A jar's link-preview image, base64 JPEG. */
   setCard(id: string, base64: string): Promise<void>;
   getCard(id: string): Promise<string | null>;
@@ -151,6 +154,14 @@ export async function redisStore(url: string): Promise<PlaygroundStore> {
       if (!k) return;
       await r.set(`tr:keeper:${name}`, JSON.stringify({ ...k, banned: true }));
       for (const id of await r.zRange(by(name), 0, -1)) await remove(id, null);
+    },
+    async deleteKeeper(name) {
+      for (const id of await r.zRange(by(name), 0, -1)) await remove(id, null);
+      const [follows, followers] = await Promise.all([r.sMembers(`tr:following:${name}`), r.sMembers(`tr:followers:${name}`)]);
+      const m = r.multi();
+      for (const f of follows) m.sRem(`tr:followers:${f}`, name);
+      for (const f of followers) m.sRem(`tr:following:${f}`, name);
+      await m.del([`tr:following:${name}`, `tr:followers:${name}`, `tr:keeper:${name}`, by(name)]).exec();
     },
     async setCard(id, base64) {
       await r.set(`tr:card:${id}`, base64);
@@ -251,6 +262,12 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
       if (!k) return;
       keepers.set(name, { ...k, banned: true });
       for (const [id, e] of items) if (e.sub.keeper === name) await this.remove(id, null);
+    },
+    async deleteKeeper(name) {
+      for (const [id, e] of items) if (e.sub.keeper === name) await this.remove(id, null);
+      follows.delete(name);
+      for (const f of follows.values()) f.delete(name);
+      keepers.delete(name);
     },
     async setCard(id, base64) {
       cards.set(id, base64);
@@ -375,6 +392,12 @@ async function keepers(req: Request, url: URL, store: PlaygroundStore, mods: Set
     if (!k || k.banned) return problem(404, 'There is no keeper by that name.');
     const [count, followers] = await Promise.all([store.countByKeeper(k.name), store.followerCount(k.name)]);
     return json({ name: k.name, createdAt: k.createdAt, count, followers });
+  }
+  if (req.method === 'DELETE') {
+    const me = await fromHeaders(store, req);
+    if (!me) return problem(401, 'Sign in to delete your account.');
+    await store.deleteKeeper(me);
+    return json({ deleted: me });
   }
   if (req.method !== 'POST') return problem(405, 'Method not allowed.');
   const body = await readJson(req);
