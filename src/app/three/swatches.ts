@@ -4,8 +4,9 @@ import type { DrainageId, HardscapeId, LidId, MoistureId, PlacementId, Substrate
 import { LOOKS } from './Critters.js';
 import { critterGeometry, critterMaterials } from './critterModels.js';
 import { fbm } from './noise.js';
-import { BUILDERS, leafLitterGeometry, PLANT_COLORS, taperedTube } from './plants.js';
-import { barkTexture, corkTexture, lumpTexture, shellTexture, soilTexture } from './textures.js';
+import { deadLeafGeometry, driftwoodGeometry } from './hardscape.js';
+import { BUILDERS, PLANT_COLORS } from './plants.js';
+import { barkTexture, corkTexture, deadLeafTexture, lumpTexture, shellTexture, soilTexture } from './textures.js';
 import { glassGeometry, SHAPES } from './vessel.js';
 
 /**
@@ -97,16 +98,18 @@ function hardscape(id: HardscapeId) {
     map.repeat.set(2, 1);
     map.needsUpdate = true;
     const pts = [new THREE.Vector3(-1.2, -0.4, 0.2), new THREE.Vector3(-0.3, 0, 0), new THREE.Vector3(0.5, 0.25, -0.1), new THREE.Vector3(1.2, 0.6, -0.2)];
-    return new THREE.Mesh(taperedTube(pts, 0.4, 0.18, 24, 14), new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.85 }));
+    return new THREE.Mesh(driftwoodGeometry(pts, 0.4, 0.18), new THREE.MeshStandardMaterial({ map, bumpMap: map, bumpScale: 4, roughness: 0.85, vertexColors: true }));
   }
+  // A small heap of the same fallen leaves the jar shows.
   const g = new THREE.Group();
-  const palette = ['#8a5a2b', '#a0703a', '#6f4a26', '#b0864e', '#7c5a3a'];
-  const geo = leafLitterGeometry();
-  for (let i = 0; i < 14; i++) {
-    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: palette[i % palette.length], roughness: 0.8, side: THREE.DoubleSide }));
-    m.position.set(Math.sin(i * 2.4) * 0.05 * i * 0.4, i * 0.004, Math.cos(i * 2.4) * 0.05 * i * 0.4);
-    m.rotation.set(Math.PI / 2 - 0.2 + (i % 3) * 0.15, i * 1.3, 0, 'YXZ');
-    m.scale.setScalar(9);
+  const geo = deadLeafGeometry();
+  const kinds = ['oak', 'beech', 'willow'] as const;
+  const mats = kinds.map((k) => new THREE.MeshStandardMaterial({ map: deadLeafTexture(k), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85 }));
+  for (let i = 0; i < 9; i++) {
+    const m = new THREE.Mesh(geo, mats[i % 3]!);
+    m.position.set(Math.sin(i * 2.4) * 0.09 * i * 0.3, i * 0.012, Math.cos(i * 2.4) * 0.09 * i * 0.3);
+    m.rotation.set((i % 3 - 1) * 0.15, i * 1.3, 0, 'YXZ');
+    m.scale.setScalar(0.9);
     g.add(m);
   }
   return g;
