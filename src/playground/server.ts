@@ -18,7 +18,8 @@
  *   POST   /api/terrariums?id=ID&action=card             { image } a JPEG preview card     (its keeper only)
  *   GET    /api/terrariums?id=ID&card=1                  the preview card
  *   POST   /api/keepers?action=ban                       { name } removes all their jars   (moderators only)
- *   GET    /api/share?id=ID   (served at /s/ID)          a page with link-preview tags that opens the jar
+ *   DELETE /api/keepers                                  delete your account and its jars  (keeper only)
+ *   GET    /s/ID                                         a page with link-preview tags that opens the jar
  *
  * Moderators are the usernames listed in the MODERATORS environment variable.
  *
@@ -54,6 +55,8 @@ export interface PlaygroundStore {
   remove(id: string, keeper: string | null): Promise<boolean>;
   /** Marks the keeper banned and removes all their jars. */
   ban(name: string): Promise<void>;
+  /** Removes the keeper, their jars and their follows; the name is free again. */
+  deleteKeeper(name: string): Promise<void>;
   /** A jar's link-preview image, base64 JPEG. */
   setCard(id: string, base64: string): Promise<void>;
   getCard(id: string): Promise<string | null>;
@@ -151,6 +154,14 @@ export async function redisStore(url: string): Promise<PlaygroundStore> {
       if (!k) return;
       await r.set(`tr:keeper:${name}`, JSON.stringify({ ...k, banned: true }));
       for (const id of await r.zRange(by(name), 0, -1)) await remove(id, null);
+    },
+    async deleteKeeper(name) {
+      for (const id of await r.zRange(by(name), 0, -1)) await remove(id, null);
+      const [follows, followers] = await Promise.all([r.sMembers(`tr:following:${name}`), r.sMembers(`tr:followers:${name}`)]);
+      const m = r.multi();
+      for (const f of follows) m.sRem(`tr:followers:${f}`, name);
+      for (const f of followers) m.sRem(`tr:following:${f}`, name);
+      await m.del([`tr:following:${name}`, `tr:followers:${name}`, `tr:keeper:${name}`, by(name)]).exec();
     },
     async setCard(id, base64) {
       await r.set(`tr:card:${id}`, base64);
@@ -251,6 +262,12 @@ export function memoryStore(seed: { keepers?: Keeper[]; subs?: Submission[] } = 
       if (!k) return;
       keepers.set(name, { ...k, banned: true });
       for (const [id, e] of items) if (e.sub.keeper === name) await this.remove(id, null);
+    },
+    async deleteKeeper(name) {
+      for (const [id, e] of items) if (e.sub.keeper === name) await this.remove(id, null);
+      follows.delete(name);
+      for (const f of follows.values()) f.delete(name);
+      keepers.delete(name);
     },
     async setCard(id, base64) {
       cards.set(id, base64);
@@ -376,6 +393,14 @@ async function keepers(req: Request, url: URL, store: PlaygroundStore, mods: Set
     const [count, followers] = await Promise.all([store.countByKeeper(k.name), store.followerCount(k.name)]);
     return json({ name: k.name, createdAt: k.createdAt, count, followers });
   }
+  if (req.method === 'DELETE') {
+    const me = await fromHeaders(store, req);
+    if (!me) return problem(401, 'Sign in to delete your account.');
+    // Freeing a moderator's name would let anyone claim it, and moderation with it.
+    if (mods.has(me)) return problem(400, 'Moderators cannot delete their account; take the name off MODERATORS first.');
+    await store.deleteKeeper(me);
+    return json({ deleted: me });
+  }
   if (req.method !== 'POST') return problem(405, 'Method not allowed.');
   const body = await readJson(req);
   const action = url.searchParams.get('action');
@@ -416,6 +441,8 @@ async function keepers(req: Request, url: URL, store: PlaygroundStore, mods: Set
   const name = normaliseName(body.name);
   const why = usernameProblem(name);
   if (why) return problem(400, why);
+  // Moderation goes by name, so a listed name nobody has claimed yet must stay unclaimable.
+  if (mods.has(name)) return problem(409, 'That name is taken.');
   if (!(await store.allow(`keeper:${clientKey(req)}`, KEEPERS_PER_HOUR, 3600))) return problem(429, 'You have made several names in the last hour. Try again later.');
   const key = newRecoveryCode();
   const created = await store.createKeeper({ name, createdAt: Date.now(), keyHash: await sha256(normaliseCode(key)) });
@@ -441,9 +468,9 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore, mods: 
     if (id && url.searchParams.has('card')) {
       const card = await store.getCard(id);
       if (!card) return problem(404, 'No picture for that terrarium.');
-      // A jar's card never changes: sharing again makes a new jar id.
+      // An hour, not forever: a jar a moderator removes should lose its picture too.
       return new Response(Uint8Array.from(atob(card), (c) => c.charCodeAt(0)), {
-        headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=31536000, immutable' },
+        headers: { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=3600' },
       });
     }
     if (id) {
@@ -481,6 +508,7 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore, mods: 
     const keeper = await fromHeaders(store, req);
     const sub = keeper ? await store.get(id) : null;
     if (!sub || sub.keeper !== keeper) return problem(403, 'Only the keeper who shared it can add its picture.');
+    if (!(await store.allow(`card:${keeper}`, 20, 3600))) return problem(429, 'Slow down a little.');
     const { image } = await readJson(req);
     const m = typeof image === 'string' && image.length <= MAX_CARD ? CARD.exec(image) : null;
     if (!m) return problem(400, 'The picture must be a JPEG under 150 KB.');
@@ -494,10 +522,13 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore, mods: 
     if (typeof voter !== 'string' || !VOTER.test(voter)) return problem(400, 'Bad voter.');
     if (!(await store.allow(`vote:${clientKey(req)}`, 120, 3600))) return problem(429, 'Slow down a little.');
     if (action === 'like') {
+      // Voter ids are made up by browsers, so also cap likes from one connection.
+      if (!(await store.allow(`like:${clientKey(req)}:${id}`, 3, 86400))) return problem(429, 'You have liked this one already.');
       const likes = await store.like(id, voter);
       return likes === null ? problem(404, 'Not found.') : json({ likes });
     }
-    if (action === 'report') return json({ hidden: await store.report(id, voter) });
+    // Reports hide jars, so they count by connection, not by an id anyone can make up.
+    if (action === 'report') return json({ hidden: await store.report(id, await sha256(`report:${clientKey(req)}`)) });
     return problem(400, 'Unknown action.');
   }
 
@@ -516,11 +547,11 @@ const escape = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
  * /s/ID: what a chat app or social site sees when a jar's link is pasted (the jar's page
  * itself lives after a #, which never reaches a server), and a doorway into the app for people.
  */
-async function sharePage(req: Request, url: URL, id: string, store: PlaygroundStore | null): Promise<Response> {
+async function sharePage(url: URL, id: string, store: PlaygroundStore | null): Promise<Response> {
   const target = ID.test(id) ? `/#/community/${id}` : '/#/community';
   const sub = store && ID.test(id) ? await store.get(id) : null;
-  const host = req.headers.get('x-forwarded-host') ?? url.host;
-  const origin = `${req.headers.get('x-forwarded-proto') ?? url.protocol.replace(':', '')}://${host}`;
+  // From the address itself, not forwarded headers: the page is cached, so a header could poison it.
+  const origin = url.origin;
   const title = sub ? `${sub.spec.name} by @${sub.keeper}` : 'Terrarium';
   const description = sub ? sub.note || `A living terrarium on the community shelf, day ${sub.day}. Look inside, or plant a copy.` : 'Build terrariums and watch them live.';
   const card = sub && (await store!.getCard(id)) ? `${origin}/api/terrariums?id=${id}&card=1` : null;
@@ -544,16 +575,19 @@ export interface HandleOptions {
   moderators?: string[];
 }
 
-/** Routes /api/keepers, /api/terrariums and /api/share. */
+/**
+ * Routes /api/keepers, /api/terrariums and /s/ID. On Vercel all three reach one function
+ * through rewrites that also add ?route=, so either the path or that names the route.
+ */
 export async function handle(req: Request, store: PlaygroundStore | null, opts: HandleOptions = {}): Promise<Response> {
   const url = new URL(req.url);
-  // Vercel hands the function the address as it was asked for (/s/ID), not as rewritten (/api/share?id=ID).
-  const shared = /\/s\/([^/]+)$/.exec(url.pathname)?.[1] ?? (url.pathname.endsWith('/share') ? url.searchParams.get('id') : null);
-  if (shared !== null) return sharePage(req, url, shared, store);
+  const route = url.searchParams.get('route');
+  const shared = /\/s\/([^/]+)$/.exec(url.pathname)?.[1] ?? (route === 'share' ? url.searchParams.get('id') : null);
+  if (shared !== null) return sharePage(url, shared, store);
   if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(opts.why ? { setup: opts.why } : {}) }, 503);
   const mods = new Set((opts.moderators ?? []).map(normaliseName).filter(Boolean));
   try {
-    if (url.pathname.endsWith('/keepers')) return await keepers(req, url, store, mods);
+    if (url.pathname.endsWith('/keepers') || route === 'keepers') return await keepers(req, url, store, mods);
     return await terrariums(req, url, store, mods);
   } catch (e) {
     if (e instanceof InvalidSubmission) return problem(400, e.message);

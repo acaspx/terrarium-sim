@@ -18,9 +18,7 @@ function playgroundApi(env: Record<string, string>): Plugin {
     name: 'playground-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url || !/^\/(api\/(terrariums|keepers|share)|s\/)/.test(req.url)) return next();
-        // As vercel.json rewrites it.
-        const path = req.url.replace(/^\/s\/([^/?#]+).*/, '/api/share?id=$1');
+        if (!req.url || !/^\/(api\/(terrariums|keepers)|s\/)/.test(req.url)) return next();
         try {
           const mod = await server.ssrLoadModule('/src/playground/dev.ts');
           store ??= mod.devStore(env).catch((e: unknown) => {
@@ -30,7 +28,7 @@ function playgroundApi(env: Record<string, string>): Plugin {
           const headers = new Headers();
           for (const [k, v] of Object.entries(req.headers)) if (typeof v === 'string') headers.set(k, v);
           const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
-          const request = new Request(`http://${req.headers.host ?? 'localhost'}${path}`, { method: req.method, headers, body: hasBody ? await body(req) : undefined });
+          const request = new Request(`http://${req.headers.host ?? 'localhost'}${req.url}`, { method: req.method, headers, body: hasBody ? await body(req) : undefined });
           const response: Response = await mod.handle(request, await store, mod.optionsFromEnv(env));
           res.statusCode = response.status;
           response.headers.forEach((v, k) => res.setHeader(k, v));

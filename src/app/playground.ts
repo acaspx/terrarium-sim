@@ -94,6 +94,12 @@ export function signOut() {
   setIdentity(null);
 }
 
+/** Delete the account on the server (its shared jars go too), then sign out here. */
+export async function deleteAccount() {
+  await request('keepers', { method: 'DELETE', headers: auth() });
+  setIdentity(null);
+}
+
 // ------------------------------------------------------------------ following
 
 /** Who the signed-in keeper follows; null until it has loaded (or when signed out). */

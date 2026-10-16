@@ -5,8 +5,16 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/terrariums",
+      "destination": "/api/shelf?route=terrariums"
+    },
+    {
+      "source": "/api/keepers",
+      "destination": "/api/shelf?route=keepers"
+    },
+    {
       "source": "/s/:id",
-      "destination": "/api/share?id=:id"
+      "destination": "/api/shelf?route=share&id=:id"
     }
   ]
 }

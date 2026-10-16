@@ -19,8 +19,8 @@ npm run sim        # the engine from the command line
 
 ## Deploy on Vercel
 
-Jars are saved in the browser's local storage. The community shelf is two Vercel
-functions (`api/terrariums.ts`, `api/keepers.ts`) backed by Redis.
+Jars are saved in the browser's local storage. The community shelf is one Vercel
+function (`api/shelf.ts`) backed by Redis.
 
 1. Push this repo to GitHub.
 2. In Vercel, choose **Add New → Project** and import the repo. Vercel reads

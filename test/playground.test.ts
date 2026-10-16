@@ -110,10 +110,20 @@ describe('community shelf', () => {
     const store = memoryStore();
     const k = await claim(store, 'ana');
     const { item } = await (await share(store, k)).json();
-    for (let i = 0; i < 3; i++) await call(store, 'POST', `?id=${item.id}&action=like`, { voter: 'visitor-0001' });
-    const { likes } = await (await call(store, 'POST', `?id=${item.id}&action=like`, { voter: 'visitor-0002' })).json();
-    expect(likes).toBe(2);
-    for (const v of ['reporter-1', 'reporter-2', 'reporter-3']) await call(store, 'POST', `?id=${item.id}&action=report`, { voter: v });
+    const from = (ip: string) => ({ 'x-forwarded-for': ip });
+    const like = (voter: string, ip: string) => call(store, 'POST', `?id=${item.id}&action=like`, { voter }, from(ip));
+    const report = (voter: string, ip: string) => call(store, 'POST', `?id=${item.id}&action=report`, { voter }, from(ip));
+    await like('visitor-0001', '1.1.1.1');
+    await like('visitor-0001', '1.1.1.1');
+    expect((await (await like('visitor-0002', '2.2.2.2')).json()).likes).toBe(2);
+    // Made-up voter ids from one connection stop counting after three.
+    for (let i = 0; i < 5; i++) await like(`made-up-000${i}`, '3.3.3.3');
+    expect((await (await call(store, 'GET', `?id=${item.id}`)).json()).likes).toBe(5);
+    // Reports count by connection: one connection cannot hide a jar, however many ids it invents.
+    for (const v of ['reporter-1', 'reporter-2', 'reporter-3']) await report(v, '4.4.4.4');
+    expect((await (await call(store, 'GET', '')).json()).items).toHaveLength(1);
+    await report('reporter-4', '5.5.5.5');
+    await report('reporter-5', '6.6.6.6');
     expect((await (await call(store, 'GET', '')).json()).items).toEqual([]);
     expect((await (await call(store, 'GET', '?keeper=ana')).json()).items).toEqual([]);
   });
@@ -155,6 +165,9 @@ describe('community shelf', () => {
     expect(st.hour).toBeLessThanOrEqual(5 * 365 * 24);
     expect(typeof st.pools.moldG).toBe('number');
     expect(st.plants.every((p) => p.speciesId !== 'triffid')).toBe(true);
+    // Journal lines arrive from the browser too, so they go through the word filter.
+    const said = conformState(spec(), { ...s, events: [{ hour: 1, type: 'alert', message: 'what a sh1t jar' }, { hour: 2, type: 'alert', message: 'Visible mold bloom.' }] });
+    expect(said.events.map((e) => e.message)).toEqual(['Visible mold bloom.']);
   });
 
   it('says so when storage is not configured', async () => {
@@ -181,6 +194,23 @@ describe('following', () => {
     expect((await (await call(store, 'GET', '?action=following', undefined, as(ana), 'keepers')).json()).names).toEqual([]);
     expect((await follow(store, bob, 'bob')).status).toBe(400);
     expect((await follow(store, bob, 'nobody')).status).toBe(404);
+  });
+
+  it('deletes your own account: jars, follows and name, which is free again', async () => {
+    const store = memoryStore();
+    const ana = await claim(store, 'ana');
+    const bob = await claim(store, 'bob');
+    await share(store, ana);
+    await follow(store, ana, 'bob');
+    await follow(store, bob, 'ana');
+    expect((await call(store, 'DELETE', '', undefined, {}, 'keepers')).status).toBe(401);
+    expect((await call(store, 'DELETE', '', undefined, as({ name: 'ana', key: newRecoveryCode() }), 'keepers')).status).toBe(401);
+    expect((await call(store, 'DELETE', '', undefined, as(ana), 'keepers')).status).toBe(200);
+    expect((await (await call(store, 'GET', '?sort=recent')).json()).items).toEqual([]);
+    expect((await (await call(store, 'GET', '?name=bob', undefined, {}, 'keepers')).json()).followers).toBe(0);
+    expect((await (await call(store, 'GET', '?action=following', undefined, as(bob), 'keepers')).json()).names).toEqual([]);
+    expect((await share(store, ana)).status).toBe(401);
+    expect((await claim(store, 'ana')).res.status).toBe(201);
   });
 
   it('needs a keeper, with the right code, to follow or to see who they follow', async () => {
@@ -262,6 +292,15 @@ describe('moderation', () => {
     expect((await claim(store, 'ana')).res.status).toBe(409);
   });
 
+  it('keeps moderator names out of reach: unclaimed ones cannot be claimed, claimed ones cannot be freed', async () => {
+    const store = memoryStore();
+    const claimAs = (name: string) => handle(new Request('http://x/api/keepers', { method: 'POST', body: JSON.stringify({ name }) }), store, { moderators: ['mia', 'zed'] });
+    expect((await claimAs('zed')).status).toBe(409);
+    const mia = await claim(store, 'mia');
+    expect((await mod(store, 'DELETE', '', undefined, mia, 'keepers')).status).toBe(400);
+    expect((await mod(store, 'GET', '?action=following', undefined, mia, 'keepers')).status).toBe(200);
+  });
+
   it('tells a moderator they are one', async () => {
     const store = memoryStore();
     const mia = await claim(store, 'mia');
@@ -292,17 +331,19 @@ describe('link previews', () => {
     const ana = await claim(store, 'ana');
     const { item } = await (await share(store, ana, { note: 'Ferns & <moss>' })).json();
     await call(store, 'POST', `?id=${item.id}&action=card`, { image: jpeg }, as(ana));
-    const res = await handle(new Request(`http://x/api/share?id=${item.id}`, { headers: { 'x-forwarded-host': 'terrarium.example', 'x-forwarded-proto': 'https' } }), store);
+    // Forwarded headers are ignored: the page is cached, so they could poison it.
+    const res = await handle(new Request(`https://terrarium.example/s/${item.id}`, { headers: { 'x-forwarded-host': 'evil.example' } }), store);
     const html = await res.text();
     expect(res.headers.get('content-type')).toContain('text/html');
     expect(html).toContain(`<meta property="og:title" content="${item.spec.name} by @ana">`);
     expect(html).toContain('content="Ferns &#38; &#60;moss&#62;"');
     expect(html).toContain(`content="https://terrarium.example/api/terrariums?id=${item.id}&#38;card=1"`);
+    expect(html).not.toContain('evil.example');
     expect(html).toContain(`/#/community/${item.id}`);
-    // As Vercel delivers it after the rewrite: the original path.
-    expect(await (await handle(new Request(`http://x/s/${item.id}`), store)).text()).toContain(`by @ana`);
+    // However Vercel delivers the rewrite: as asked for, or as rewritten.
+    expect(await (await handle(new Request(`http://x/api/shelf?route=share&id=${item.id}`), store)).text()).toContain(`by @ana`);
     // Without storage it still opens the app.
-    expect(await (await handle(new Request('http://x/api/share?id=nope'), null)).text()).toContain('/#/community');
+    expect(await (await handle(new Request('http://x/s/nope'), null)).text()).toContain('/#/community');
   });
 });
 
@@ -380,6 +421,14 @@ describe.each(stores)('%s store', (_, make) => {
     expect((await s.getKeeper('bob'))?.banned).toBe(true);
     expect(await s.listByKeeper('bob', 0, 10)).toEqual([]);
     expect(await s.getCard('aaaaaa')).toBeNull();
+    await s.createKeeper({ name: 'cy', createdAt: 1, keyHash: 'h' });
+    await s.follow('cy', 'ana');
+    await s.follow('ana', 'cy');
+    await s.deleteKeeper('cy');
+    expect(await s.getKeeper('cy')).toBeNull();
+    expect(await s.listByKeeper('cy', 0, 10)).toEqual([]);
+    expect(await s.following('ana')).toEqual(['bob']);
+    expect(await s.followerCount('ana')).toBe(0);
     expect(await s.allow('k', 2, 60)).toBe(true);
     expect(await s.allow('k', 2, 60)).toBe(true);
     expect(await s.allow('k', 2, 60)).toBe(false);
