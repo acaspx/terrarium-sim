@@ -68,7 +68,9 @@ describe('community shelf', () => {
     const { item } = await res.json();
     expect(item.day).toBe(30);
     expect(item.keeper).toBe('ana');
-    const all = await (await call(store, 'GET', '?sort=recent')).json();
+    const listed = await call(store, 'GET', '?sort=recent');
+    expect(listed.headers.get('cache-control')).toBe('no-store');
+    const all = await listed.json();
     expect(all.items.map((x: { id: string }) => x.id)).toEqual([item.id]);
     const mine = await (await call(store, 'GET', '?keeper=ana')).json();
     expect(mine.items.map((x: { id: string }) => x.id)).toEqual([item.id]);
