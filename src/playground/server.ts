@@ -526,8 +526,7 @@ const escape = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
  * /s/ID: what a chat app or social site sees when a jar's link is pasted (the jar's page
  * itself lives after a #, which never reaches a server), and a doorway into the app for people.
  */
-async function sharePage(req: Request, url: URL, store: PlaygroundStore | null): Promise<Response> {
-  const id = url.searchParams.get('id') ?? '';
+async function sharePage(req: Request, url: URL, id: string, store: PlaygroundStore | null): Promise<Response> {
   const target = ID.test(id) ? `/#/community/${id}` : '/#/community';
   const sub = store && ID.test(id) ? await store.get(id) : null;
   const host = req.headers.get('x-forwarded-host') ?? url.host;
@@ -558,7 +557,9 @@ export interface HandleOptions {
 /** Routes /api/keepers, /api/terrariums and /api/share. */
 export async function handle(req: Request, store: PlaygroundStore | null, opts: HandleOptions = {}): Promise<Response> {
   const url = new URL(req.url);
-  if (url.pathname.endsWith('/share')) return sharePage(req, url, store);
+  // Vercel hands the function the address as it was asked for (/s/ID), not as rewritten (/api/share?id=ID).
+  const shared = /\/s\/([^/]+)$/.exec(url.pathname)?.[1] ?? (url.pathname.endsWith('/share') ? url.searchParams.get('id') : null);
+  if (shared !== null) return sharePage(req, url, shared, store);
   if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(opts.why ? { setup: opts.why } : {}) }, 503);
   const mods = new Set((opts.moderators ?? []).map(normaliseName).filter(Boolean));
   try {
