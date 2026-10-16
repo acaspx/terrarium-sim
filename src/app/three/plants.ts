@@ -513,7 +513,3 @@ export const PLANT_COLORS: Record<string, { leaf: string; accent: string }> = {
   'birds-nest-fern': { leaf: '#86b84c', accent: '#3a2a1e' },
   'lemon-button-fern': { leaf: '#93bf52', accent: '#6f8f3a' },
 };
-
-export function leafLitterGeometry() {
-  return leafGeometry(0.07, 0.04, -0.05, 0.15);
-}

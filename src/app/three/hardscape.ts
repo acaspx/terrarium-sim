@@ -96,3 +96,23 @@ export function driftwoodGeometry(points: THREE.Vector3[], r0: number, r1: numbe
   const parts = [tube, cap(points[0]!, r0), cap(points[points.length - 1]!, r1)].map((g) => (g.index ? g.toNonIndexed() : g));
   return mergeGeometries(parts)!;
 }
+
+/**
+ * A fallen leaf lying on the soil, a unit long: creased along the midrib, the edges and
+ * tip curling up as it dries. Flat in shape: the outline is cut by its texture.
+ */
+export function deadLeafGeometry(): THREE.BufferGeometry {
+  const g = new THREE.PlaneGeometry(1, 1, 8, 12);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const u = p.getX(i);
+    const v = p.getY(i) + 0.5;
+    const crease = Math.abs(u) * 0.14;
+    const curl = u * u * 0.55 + Math.pow(v, 3) * 0.12;
+    p.setZ(i, crease + curl);
+  }
+  // Lie down: the plane's z becomes height above the soil.
+  g.rotateX(-Math.PI / 2);
+  g.computeVertexNormals();
+  return g;
+}

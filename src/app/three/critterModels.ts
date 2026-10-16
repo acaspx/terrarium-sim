@@ -8,6 +8,10 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
  * species by Look.scale. The ground sits at y = -0.7, where the legs reach.
  *
  * Material groups: 0 shell, 1 legs and underside, 2 accent (face, claws), 3 wings, 4 eyes.
+ *
+ * Moving parts carry a `motion` attribute (weight, phase, kind): how far from where the
+ * part joins the body (0 there, 1 at its tip), its place in the gait, and what it does.
+ * critterMaterials' shader moves them; see MOTION.
  */
 export type Body = 'isopod' | 'springtail' | 'crab' | 'gnat';
 
@@ -19,6 +23,17 @@ const LIMB = 1;
 const ACCENT = 2;
 const WING = 3;
 const EYE = 4;
+
+/** What a moving part does (the motion attribute's z). */
+export const MOTION = { none: 0, leg: 1, antenna: 2, claw: 3, wing: 4 } as const;
+interface Moves {
+  kind: number;
+  phase: number;
+  /** Where it joins the body, and how long it is: the weight runs 0..1 along it. */
+  from: [number, number, number];
+  len: number;
+}
+type Part = [THREE.BufferGeometry, number, Moves?];
 
 /** A tube along a few points, rounded off: legs, antennae, stalks. */
 function limb(points: [number, number, number][], radius: number, radial = 4): THREE.BufferGeometry {
@@ -36,15 +51,26 @@ function ellipsoid(rx: number, ry: number, rz: number, at: [number, number, numb
   return new THREE.SphereGeometry(1, lite ? Math.ceil(w * 0.6) : w, lite ? Math.ceil(h * 0.6) : h).scale(rx, ry, rz).translate(...at);
 }
 
-/** Parts tagged with their material group, merged into one geometry. */
-function build(parts: [THREE.BufferGeometry, number][]): THREE.BufferGeometry {
+/** Parts tagged with their material group (and motion, if they move), merged into one geometry. */
+function build(parts: Part[]): THREE.BufferGeometry {
   const byGroup = new Map<number, THREE.BufferGeometry[]>();
-  for (const [g, group] of parts) {
+  for (const [g, group, moves] of parts) {
     // Smooth normals while the part still shares its vertices, then unshare to merge.
     g.computeVertexNormals();
     const clean = g.index ? g.toNonIndexed() : g;
     // Every part needs the same attributes to merge: drop what only some have.
     for (const name of Object.keys(clean.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') clean.deleteAttribute(name);
+    const pos = clean.attributes.position as THREE.BufferAttribute;
+    const motion = new Float32Array(pos.count * 3);
+    if (moves) {
+      const from = new THREE.Vector3(...moves.from);
+      const v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) {
+        const w = moves.kind === MOTION.wing ? Math.abs(v.fromBufferAttribute(pos, i).x) / 1.1 : v.fromBufferAttribute(pos, i).distanceTo(from) / moves.len;
+        motion.set([Math.min(1, w), moves.phase, moves.kind], i * 3);
+      }
+    }
+    clean.setAttribute('motion', new THREE.BufferAttribute(motion, 3));
     byGroup.set(group, [...(byGroup.get(group) ?? []), clean]);
   }
   const groups = [...byGroup.keys()].sort();
@@ -80,16 +106,23 @@ function segmentedShell(segments: number, flare: number): THREE.BufferGeometry {
 }
 
 function isopod(): THREE.BufferGeometry {
-  const parts: [THREE.BufferGeometry, number][] = [[segmentedShell(9, 0.1), SHELL]];
+  const parts: Part[] = [[segmentedShell(9, 0.1), SHELL]];
   // The underside, slightly smaller, in the leg colour.
   parts.push([ellipsoid(0.92, 0.2, 0.95, [0, -0.08, 0], 12, 6), LIMB]);
-  // Seven pairs of walking legs, knees out, feet on the ground.
+  // Seven pairs of walking legs, knees out, feet on the ground. They step in a wave
+  // running from tail to head, the two sides half a stride apart.
   for (let k = 0; k < 7; k++) {
     const z = 0.62 - k * 0.2;
-    for (const leg of pair((s) => limb([[s * 0.7, -0.12, z], [s * 1.12, -0.18, z + 0.05], [s * 1.22, GROUND + 0.05, z + 0.12]], 0.045))) parts.push([leg, LIMB]);
+    for (const s of [1, -1] as const) {
+      parts.push([limb([[s * 0.7, -0.12, z], [s * 1.12, -0.18, z + 0.05], [s * 1.22, GROUND + 0.05, z + 0.12]], 0.045), LIMB,
+        { kind: MOTION.leg, phase: k * 0.9 + (s > 0 ? 0 : Math.PI), from: [s * 0.7, -0.12, z], len: 0.95 }]);
+    }
   }
-  // Antennae sweep forward and out.
-  for (const a of pair((s) => limb([[s * 0.25, 0.05, 0.92], [s * 0.6, 0.12, 1.35], [s * 1.05, 0.02, 1.7], [s * 1.35, -0.15, 1.85]], 0.04))) parts.push([a, LIMB]);
+  // Antennae sweep forward and out, and feel about.
+  for (const s of [1, -1] as const) {
+    parts.push([limb([[s * 0.25, 0.05, 0.92], [s * 0.6, 0.12, 1.35], [s * 1.05, 0.02, 1.7], [s * 1.35, -0.15, 1.85]], 0.04), LIMB,
+      { kind: MOTION.antenna, phase: s > 0 ? 0 : 2.1, from: [s * 0.25, 0.05, 0.92], len: 1.5 }]);
+  }
   // Tail prongs (uropods).
   for (const u of pair((s) => new THREE.ConeGeometry(0.1, 0.4, 6).rotateX(-Math.PI / 2).translate(s * 0.28, -0.05, -1.12))) parts.push([u, LIMB]);
   // The head, in the accent colour (the rubber ducky's yellow face; the shell colour otherwise).
@@ -98,7 +131,7 @@ function isopod(): THREE.BufferGeometry {
 }
 
 function springtail(): THREE.BufferGeometry {
-  const parts: [THREE.BufferGeometry, number][] = [[ellipsoid(1, 1, 1, [0, 0, 0], 16, 12), SHELL]];
+  const parts: Part[] = [[ellipsoid(1, 1, 1, [0, 0, 0], 16, 12), SHELL]];
   for (const a of pair((s) => limb([[s * 0.3, 0.3, 0.9], [s * 0.55, 0.6, 1.5], [s * 0.7, 0.7, 2.1]], 0.12))) parts.push([a, LIMB]);
   for (let k = 0; k < 3; k++) {
     const z = 0.5 - k * 0.45;
@@ -119,28 +152,35 @@ function crab(): THREE.BufferGeometry {
     v.y = v.y < 0 ? v.y * 0.35 : v.y * (1 - 0.25 * v.z * v.z);
     p.setXYZ(i, v.x, v.y, v.z);
   }
-  const parts: [THREE.BufferGeometry, number][] = [[shell, SHELL]];
+  const parts: Part[] = [[shell, SHELL]];
   // Eyes on short stalks at the front corners.
   for (const st of pair((s) => limb([[s * 0.42, 0.35, 0.78], [s * 0.5, 0.65, 0.95]], 0.07))) parts.push([st, LIMB]);
   for (const e of pair((s) => ellipsoid(0.14, 0.14, 0.14, [s * 0.5, 0.7, 0.98]))) parts.push([e, EYE]);
-  // Claws: an arm forward and in, a swollen hand, and a finger.
+  // Claws: an arm forward and in, a swollen hand, and a finger. Raised when threatened.
   for (const s of [1, -1] as const) {
-    parts.push([limb([[s * 0.75, -0.05, 0.6], [s * 0.95, 0.0, 1.0], [s * 0.7, 0.05, 1.35]], 0.11), ACCENT]);
-    parts.push([ellipsoid(0.24, 0.2, 0.36, [s * 0.6, 0.08, 1.55], 14, 10), ACCENT]);
-    parts.push([new THREE.ConeGeometry(0.07, 0.38, 6).rotateX(Math.PI / 2).translate(s * 0.48, 0.05, 1.95), ACCENT]);
+    const claw: Moves = { kind: MOTION.claw, phase: 0, from: [s * 0.75, -0.05, 0.6], len: 1.5 };
+    parts.push([limb([[s * 0.75, -0.05, 0.6], [s * 0.95, 0.0, 1.0], [s * 0.7, 0.05, 1.35]], 0.11), ACCENT, claw]);
+    parts.push([ellipsoid(0.24, 0.2, 0.36, [s * 0.6, 0.08, 1.55], 14, 10), ACCENT, claw]);
+    parts.push([new THREE.ConeGeometry(0.07, 0.38, 6).rotateX(Math.PI / 2).translate(s * 0.48, 0.05, 1.95), ACCENT, claw]);
   }
-  // Four pairs of walking legs, splayed out sideways, each bent at the knee.
+  // Four pairs of walking legs, splayed out sideways, each bent at the knee; neighbours
+  // and opposite sides alternate, as crabs do.
   for (let k = 0; k < 4; k++) {
     const z = 0.45 - k * 0.38;
     const reach = 1.85 - Math.abs(k - 1.5) * 0.18;
-    for (const leg of pair((s) => limb([[s * 0.85, -0.1, z], [s * 1.35, 0.35, z - 0.05], [s * reach, 0.0, z - 0.12], [s * (reach + 0.25), GROUND + 0.04, z - 0.2]], 0.07, 5))) parts.push([leg, LIMB]);
+    for (const s of [1, -1] as const) {
+      parts.push([limb([[s * 0.85, -0.1, z], [s * 1.35, 0.35, z - 0.05], [s * reach, 0.0, z - 0.12], [s * (reach + 0.25), GROUND + 0.04, z - 0.2]], 0.07, 5), LIMB,
+        { kind: MOTION.leg, phase: (k % 2) * Math.PI + (s > 0 ? 0 : Math.PI), from: [s * 0.85, -0.1, z], len: 1.4 }]);
+    }
   }
   return build(parts);
 }
 
 function gnat(): THREE.BufferGeometry {
-  const parts: [THREE.BufferGeometry, number][] = [[ellipsoid(0.7, 0.7, 1.3, [0, 0, 0], 12, 8), SHELL]];
-  for (const w of pair((s) => new THREE.CircleGeometry(1, 12).scale(0.55, 1.4, 1).rotateX(-Math.PI / 2).rotateY(s * 0.5).translate(s * 0.55, 0.45, -0.3))) parts.push([w, WING]);
+  const parts: Part[] = [[ellipsoid(0.7, 0.7, 1.3, [0, 0, 0], 12, 8), SHELL]];
+  for (const w of pair((s) => new THREE.CircleGeometry(1, 12).scale(0.55, 1.4, 1).rotateX(-Math.PI / 2).rotateY(s * 0.5).translate(s * 0.55, 0.45, -0.3))) {
+    parts.push([w, WING, { kind: MOTION.wing, phase: 0, from: [0, 0.45, 0], len: 1 }]);
+  }
   for (let k = 0; k < 3; k++) for (const leg of pair((s) => limb([[s * 0.4, -0.4, 0.4 - k * 0.4], [s * 1.1, -1.2, 0.3 - k * 0.5]], 0.06))) parts.push([leg, LIMB]);
   return build(parts);
 }
@@ -167,6 +207,55 @@ export interface CritterColors {
   /** Pattern on the shell (the dairy cow's patches, the magic potion's flecks). */
   map?: THREE.Texture | null;
   rough: number;
+  /** Legs swing across the body rather than along it: crabs walk sideways. */
+  sideways?: boolean;
+}
+
+/**
+ * Moves the tagged parts on the GPU, from a per-animal `gait` attribute: (step phase,
+ * how hard it is walking 0..1+, threat 0..1, clock). A mesh without it (a swatch) gets
+ * WebGL's default (0, 0, 0, 1): standing still.
+ */
+function animate(m: THREE.Material, sideways: boolean) {
+  m.defines = { ...m.defines, ...(sideways ? { STRIDE_X: '' } : {}) };
+  m.customProgramCacheKey = () => `critter-motion-${sideways}`;
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute vec3 motion;
+attribute vec4 gait;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  float w = motion.x;
+  float kind = motion.z;
+  float ph = gait.x + motion.y;
+  if (kind > 0.5 && kind < 1.5) {
+    // Leg: swings along the stride, lifting as it comes forward. Bodies are squashed
+    // flat by their species' scale, so the lift is large here to read once scaled.
+    float swing = sin(ph) * gait.y * w;
+    #ifdef STRIDE_X
+    transformed.x += 0.38 * swing;
+    #else
+    transformed.z += 0.38 * swing;
+    #endif
+    transformed.y += 0.45 * max(0.0, cos(ph)) * gait.y * w;
+  } else if (kind > 1.5 && kind < 2.5) {
+    // Antenna: feels about, more busily on the move.
+    transformed.x += w * 0.18 * sin(gait.w * 2.3 + motion.y) * (0.4 + 0.6 * gait.y);
+    transformed.y += w * 0.08 * sin(gait.w * 3.1 + motion.y);
+  } else if (kind > 2.5 && kind < 3.5) {
+    // Claw: swung up from the shoulder when threatened, as vampire crabs do. A rigid turn
+    // about the joint (where crab() puts it), so the arm keeps its length.
+    vec3 joint = vec3(sign(transformed.x) * 0.75, -0.05, 0.6);
+    float a = 1.1 * gait.z;
+    vec3 d = transformed - joint;
+    transformed = joint + vec3(d.x, d.y * cos(a) + d.z * sin(a), d.z * cos(a) - d.y * sin(a));
+  } else if (kind > 3.5) {
+    // Wing: a fast flap.
+    transformed.y += w * 0.45 * sin(gait.w * 70.0);
+  }
+}`);
+  };
 }
 
 /** The materials for one species, in group order: shell, legs, accent, wings, eyes. */
@@ -176,5 +265,6 @@ export function critterMaterials(c: CritterColors): THREE.Material[] {
   const accent = c.accent ? new THREE.MeshStandardMaterial({ color: c.accent, roughness: 0.35 }) : shell;
   const wing = new THREE.MeshStandardMaterial({ color: '#d8dde0', roughness: 0.2, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
   const eye = new THREE.MeshStandardMaterial({ color: c.eye ?? '#151515', roughness: 0.2 });
+  for (const m of new Set([limb, accent, wing])) animate(m, !!c.sideways);
   return [shell, limb, accent, wing, eye];
 }

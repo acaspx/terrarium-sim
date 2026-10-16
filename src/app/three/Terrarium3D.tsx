@@ -12,14 +12,14 @@ import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, ty
 import { CameraRig, type Focus, type View } from './camera.js';
 import { downgrade, useQuality, type Quality } from './quality.js';
 import { Critters } from './Critters.js';
-import { driftwoodGeometry, stoneGeometry } from './hardscape.js';
+import { deadLeafGeometry, driftwoodGeometry, stoneGeometry } from './hardscape.js';
 import { dishSpot, obstaclesFor, q, stoneSize, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Obstacle, type Placed } from './layout.js';
 import { Mushrooms } from './Mushrooms.js';
 import { clamp, hashSeed } from './noise.js';
-import { InstancedParts } from './parts.js';
-import { BUILDERS, leafLitterGeometry, PLANT_COLORS, type Part } from './plants.js';
+import { InstancedParts, type Item } from './parts.js';
+import { BUILDERS, PLANT_COLORS, type Part } from './plants.js';
 import { Room } from './Room.js';
-import { barkTexture, corkTexture, lumpTexture, moldTexture, shelfTexture, soilTexture } from './textures.js';
+import { barkTexture, corkTexture, deadLeafTexture, lumpTexture, moldTexture, shelfTexture, soilTexture, type DeadLeaf } from './textures.js';
 import { distToWall, footprint, glassGeometry, insideFp, layerGeometry, pointIn, type Shape } from './vessel.js';
 
 export interface Terrarium3DProps {
@@ -870,23 +870,37 @@ function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers,
 
 // ------------------------------------------------------------------ litter and mold
 
+const LEAF_KINDS: DeadLeaf[] = ['oak', 'beech', 'willow'];
+/** Leaf length in scene units, by kind: real leaves of 4 to 8 cm, as keepers use. */
+const LEAF_SIZE: Record<DeadLeaf, number> = { oak: 0.26, beech: 0.21, willow: 0.28 };
+
+/** Fallen leaves of three kinds, curled as they dry, darker as they rot. One draw per kind. */
 function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }) {
-  const items = useMemo(() => {
+  const byKind = useMemo(() => {
     const r = makeRng(seed + 404);
-    const n = Math.round(amount * 46);
-    const palette = ['#8a5a2b', '#a0703a', '#6f4a26', '#b0864e', '#7c5a3a'];
-    return Array.from({ length: n }, () => {
+    const n = Math.round(amount * 28);
+    const out = new Map<DeadLeaf, Item[]>(LEAF_KINDS.map((k) => [k, []]));
+    const fresh = new THREE.Color('#ffffff');
+    const old = new THREE.Color('#6b5a4c');
+    for (let i = 0; i < n; i++) {
+      const kind = LEAF_KINDS[Math.floor(r() * LEAF_KINDS.length)]!;
       const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
-      const e = new THREE.Euler(Math.PI / 2 - 0.15 + r() * 0.3, r() * Math.PI * 2, (r() - 0.5) * 0.4, 'YXZ');
-      const s = 0.8 + r() * 0.8;
-      return {
-        m: new THREE.Matrix4().compose(new THREE.Vector3(x, L.ground.heightAt(x, z) + 0.004, z), new THREE.Quaternion().setFromEuler(e), new THREE.Vector3(s, s, s)),
-        c: new THREE.Color(palette[Math.floor(r() * palette.length)]!),
-      };
-    });
+      // Lying on the soil, turned any way, a little tilted where it rests on another.
+      const e = new THREE.Euler((r() - 0.5) * 0.25, r() * Math.PI * 2, (r() - 0.5) * 0.25, 'YXZ');
+      const s = LEAF_SIZE[kind] * (0.75 + r() * 0.6);
+      out.get(kind)!.push({
+        m: new THREE.Matrix4().compose(new THREE.Vector3(x, L.ground.heightAt(x, z) + 0.003 + r() * 0.004, z), new THREE.Quaternion().setFromEuler(e), new THREE.Vector3(s, s, s)),
+        // Older leaves are darker and greyer.
+        c: fresh.clone().lerp(old, Math.pow(r(), 1.5) * 0.8),
+      });
+    }
+    return out;
   }, [L, amount, seed]);
-  const mat = useMemo(() => new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, side: THREE.DoubleSide }), []);
-  return <InstancedParts geometry={leafLitterGeometry()} material={mat} items={items} />;
+  const geometry = useMemo(() => deadLeafGeometry(), []);
+  const mats = useMemo(() => new Map(LEAF_KINDS.map((k) => [k, new THREE.MeshStandardMaterial({
+    map: deadLeafTexture(k), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85,
+  })])), []);
+  return <>{LEAF_KINDS.map((k) => <InstancedParts key={k} geometry={geometry} material={mats.get(k)!} items={byKind.get(k)!} />)}</>;
 }
 
 function Mold({ L, amount }: { L: Layout; amount: number }) {

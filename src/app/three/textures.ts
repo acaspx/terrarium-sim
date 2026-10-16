@@ -315,3 +315,97 @@ export function shellTexture(kind: 'dairy-cow' | 'magic-potion') {
     }
   });
 }
+
+export type DeadLeaf = 'oak' | 'beech' | 'willow';
+
+/** How wide each leaf is along its length (0 at the stalk, 1 at the tip), as a share of the canvas. */
+const LEAF_OUTLINE: Record<DeadLeaf, (v: number) => number> = {
+  // Rounded lobes on an obovate blade.
+  oak: (v) => 0.3 * Math.sin(Math.PI * Math.pow(v, 0.7)) * (0.72 + 0.28 * Math.max(0, Math.sin(v * Math.PI * 9 - 0.6))),
+  // Smooth and oval, with a faintly toothed edge.
+  beech: (v) => 0.3 * Math.sin(Math.PI * Math.pow(v, 0.85)) * (1 + 0.03 * Math.sin(v * 70)),
+  // Long and narrow.
+  willow: (v) => 0.13 * Math.sin(Math.PI * Math.pow(v, 0.9)),
+};
+
+/**
+ * A fallen leaf, dry and part rotted: brown blade with paler veins, darker blotches and,
+ * on the oak and willow, a few holes eaten through to the veins. Outside the leaf is
+ * transparent, so the outline comes from the picture, not the mesh.
+ */
+export function deadLeafTexture(kind: DeadLeaf) {
+  return paint(`dead-leaf-${kind}`, 256, (ctx, n) => {
+    const r = rng(kind.length * 13 + 5);
+    const outline = LEAF_OUTLINE[kind];
+    const stalk = 0.12;
+    // v runs up the canvas from the stalk (bottom) to the tip (top).
+    const px = (u: number) => n / 2 + u * n;
+    const py = (v: number) => n * (0.97 - v * 0.94);
+    const blade = new Path2D();
+    const steps = 80;
+    for (let i = 0; i <= steps; i++) {
+      const v = stalk + (1 - stalk) * (i / steps);
+      const w = outline((v - stalk) / (1 - stalk));
+      if (i === 0) blade.moveTo(px(0), py(v));
+      blade.lineTo(px(-w), py(v));
+    }
+    for (let i = steps; i >= 0; i--) {
+      const v = stalk + (1 - stalk) * (i / steps);
+      blade.lineTo(px(outline((v - stalk) / (1 - stalk))), py(v));
+    }
+    blade.closePath();
+    ctx.clearRect(0, 0, n, n);
+    // The stalk.
+    ctx.strokeStyle = '#4a3220';
+    ctx.lineWidth = n * 0.014;
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(0));
+    ctx.lineTo(px(0), py(stalk + 0.02));
+    ctx.stroke();
+    ctx.save();
+    ctx.clip(blade);
+    const g = ctx.createLinearGradient(0, py(0), 0, py(1));
+    g.addColorStop(0, '#8a5a34');
+    g.addColorStop(0.5, '#b47e48');
+    g.addColorStop(1, '#9c683a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, n, n);
+    // Blotches where it is rotting faster.
+    for (let i = 0; i < 26; i++) {
+      ctx.fillStyle = `rgba(52, 32, 18, ${0.12 + r() * 0.22})`;
+      ctx.beginPath();
+      ctx.ellipse(px((r() - 0.5) * 0.6), py(stalk + r() * 0.85), n * (0.01 + r() * 0.05), n * (0.01 + r() * 0.04), r() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Veins: paler than the blade, as on a dry leaf. A midrib and paired side veins.
+    ctx.strokeStyle = 'rgba(214, 178, 128, 0.75)';
+    ctx.lineWidth = n * 0.008;
+    ctx.beginPath();
+    ctx.moveTo(px(0), py(stalk));
+    ctx.lineTo(px(0), py(0.99));
+    ctx.stroke();
+    ctx.lineWidth = n * 0.004;
+    const pairs = kind === 'willow' ? 12 : 8;
+    for (let k = 1; k <= pairs; k++) {
+      const v = stalk + (1 - stalk) * (k / (pairs + 1));
+      const reach = outline((v - stalk) / (1 - stalk) + 0.06) * 0.95;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(px(0), py(v));
+        ctx.quadraticCurveTo(px(side * reach * 0.5), py(v + 0.03), px(side * reach), py(v + 0.09));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    // Holes eaten through by the clean-up crew.
+    if (kind !== 'beech') {
+      ctx.globalCompositeOperation = 'destination-out';
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.ellipse(px((r() - 0.5) * 0.3), py(stalk + 0.2 + r() * 0.6), n * (0.006 + r() * 0.018), n * (0.006 + r() * 0.014), r() * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  });
+}
