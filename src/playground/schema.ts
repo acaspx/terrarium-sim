@@ -187,7 +187,8 @@ export function conformState(spec: TerrariumSpec, input: unknown): TerrariumStat
   const events = (Array.isArray(src.events) ? src.events : []).slice(-LIMITS.events).flatMap((e) => {
     const ev = conform({ hour: 0, type: '', message: '' }, e);
     const message = cleanText(ev.message, 160);
-    return message ? [{ hour: ev.hour, type: cleanText(ev.type, 24), message }] : [];
+    // The engine writes these, but they arrive from the browser like anything else.
+    return message && !isOffensive(message) ? [{ hour: ev.hour, type: cleanText(ev.type, 24), message }] : [];
   });
 
   return { ...state, plants, fauna, events };

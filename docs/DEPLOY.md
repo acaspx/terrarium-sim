@@ -23,7 +23,8 @@ connected.
       for Production. Moderators see **Remove (moderator)** on any shared jar and
       **Ban** on keepers' shelves. A ban removes all of that keeper's jars and stops
       the name signing in. Claim your username on the site first, then list it here
-      and redeploy.
+      and redeploy: a listed name cannot be claimed, and a moderator cannot delete
+      their account, so nobody can take a moderator's name.
 
 Preview and production share one database unless you connect a second one.
 Fine for now; test shares from the preview will show up in production's
