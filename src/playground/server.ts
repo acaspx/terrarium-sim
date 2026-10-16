@@ -19,7 +19,7 @@
  *   GET    /api/terrariums?id=ID&card=1                  the preview card
  *   POST   /api/keepers?action=ban                       { name } removes all their jars   (moderators only)
  *   DELETE /api/keepers                                  delete your account and its jars  (keeper only)
- *   GET    /api/share?id=ID   (served at /s/ID)          a page with link-preview tags that opens the jar
+ *   GET    /s/ID                                         a page with link-preview tags that opens the jar
  *
  * Moderators are the usernames listed in the MODERATORS environment variable.
  *
@@ -567,16 +567,19 @@ export interface HandleOptions {
   moderators?: string[];
 }
 
-/** Routes /api/keepers, /api/terrariums and /api/share. */
+/**
+ * Routes /api/keepers, /api/terrariums and /s/ID. On Vercel all three reach one function
+ * through rewrites that also add ?route=, so either the path or that names the route.
+ */
 export async function handle(req: Request, store: PlaygroundStore | null, opts: HandleOptions = {}): Promise<Response> {
   const url = new URL(req.url);
-  // Vercel hands the function the address as it was asked for (/s/ID), not as rewritten (/api/share?id=ID).
-  const shared = /\/s\/([^/]+)$/.exec(url.pathname)?.[1] ?? (url.pathname.endsWith('/share') ? url.searchParams.get('id') : null);
+  const route = url.searchParams.get('route');
+  const shared = /\/s\/([^/]+)$/.exec(url.pathname)?.[1] ?? (route === 'share' ? url.searchParams.get('id') : null);
   if (shared !== null) return sharePage(req, url, shared, store);
   if (!store) return json({ error: 'The community shelf is not connected to storage yet.', ...(opts.why ? { setup: opts.why } : {}) }, 503);
   const mods = new Set((opts.moderators ?? []).map(normaliseName).filter(Boolean));
   try {
-    if (url.pathname.endsWith('/keepers')) return await keepers(req, url, store, mods);
+    if (url.pathname.endsWith('/keepers') || route === 'keepers') return await keepers(req, url, store, mods);
     return await terrariums(req, url, store, mods);
   } catch (e) {
     if (e instanceof InvalidSubmission) return problem(400, e.message);

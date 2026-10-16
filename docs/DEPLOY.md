@@ -6,7 +6,7 @@ preview URL.
 
 ## 1. Storage for the playground (you)
 
-The playground is three small Vercel functions in `api/`, backed by any Redis.
+The playground is one Vercel function, `api/shelf.ts`, backed by any Redis (one function keeps it to one database connection per running instance).
 Without storage the rest of the site works and the playground says it is not
 connected.
 
@@ -42,7 +42,7 @@ are usually behind Vercel Authentication, so `curl` gets a 401):
     predates them. The response's `setup` field says which storage variable
     names the deployment has (names only, never values). Redo step 1.
   - `500` or `FUNCTION_INVOCATION_FAILED`: open **Deployments → the preview →
-    Functions → api/terrariums → Logs** and send the error. The likely fix is
+    Functions → api/shelf → Logs** and send the error. The likely fix is
     bundling the function's imports.
   - `404`: the function was not deployed; check the build log for `api/`.
 

@@ -309,17 +309,17 @@ describe('link previews', () => {
     const ana = await claim(store, 'ana');
     const { item } = await (await share(store, ana, { note: 'Ferns & <moss>' })).json();
     await call(store, 'POST', `?id=${item.id}&action=card`, { image: jpeg }, as(ana));
-    const res = await handle(new Request(`http://x/api/share?id=${item.id}`, { headers: { 'x-forwarded-host': 'terrarium.example', 'x-forwarded-proto': 'https' } }), store);
+    const res = await handle(new Request(`http://x/s/${item.id}`, { headers: { 'x-forwarded-host': 'terrarium.example', 'x-forwarded-proto': 'https' } }), store);
     const html = await res.text();
     expect(res.headers.get('content-type')).toContain('text/html');
     expect(html).toContain(`<meta property="og:title" content="${item.spec.name} by @ana">`);
     expect(html).toContain('content="Ferns &#38; &#60;moss&#62;"');
     expect(html).toContain(`content="https://terrarium.example/api/terrariums?id=${item.id}&#38;card=1"`);
     expect(html).toContain(`/#/community/${item.id}`);
-    // As Vercel delivers it after the rewrite: the original path.
-    expect(await (await handle(new Request(`http://x/s/${item.id}`), store)).text()).toContain(`by @ana`);
+    // However Vercel delivers the rewrite: as asked for, or as rewritten.
+    expect(await (await handle(new Request(`http://x/api/shelf?route=share&id=${item.id}`), store)).text()).toContain(`by @ana`);
     // Without storage it still opens the app.
-    expect(await (await handle(new Request('http://x/api/share?id=nope'), null)).text()).toContain('/#/community');
+    expect(await (await handle(new Request('http://x/s/nope'), null)).text()).toContain('/#/community');
   });
 });
 
