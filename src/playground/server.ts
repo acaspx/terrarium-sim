@@ -461,7 +461,8 @@ async function terrariums(req: Request, url: URL, store: PlaygroundStore, mods: 
     const page = keeper
       ? await store.listByKeeper(keeper, offset, PAGE)
       : await store.list(url.searchParams.get('sort') === 'liked' ? 'liked' : 'recent', offset, PAGE);
-    return json(listing(page, offset), 200, { 'cache-control': 'public, max-age=10, stale-while-revalidate=60' });
+    // Not cached anywhere: a jar just shared or removed should show at once.
+    return json(listing(page, offset));
   }
 
   if (req.method === 'POST' && !id) {
