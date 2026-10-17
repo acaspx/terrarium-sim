@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { plantStatus } from '../format.js';
-import { ContactShadows, Environment, Html, Lightformer } from '@react-three/drei';
+import { ContactShadows, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { makeRng } from '../../engine/core/math.js';
 import {
@@ -157,7 +157,7 @@ function Lights({ lightOn, ppfd, placement, quality }: { lightOn: boolean; ppfd:
         shadow-mapSize={[1024, 1024]} shadow-bias={-0.0004} shadow-normalBias={0.02}
         shadow-camera-left={-2} shadow-camera-right={2} shadow-camera-top={2.5} shadow-camera-bottom={-1} shadow-camera-near={0.5} shadow-camera-far={14}
       />
-      <Studio resolution={quality === 'high' ? 256 : 128} />
+      <Studio />
     </>
   );
 }
@@ -168,15 +168,44 @@ function Lights({ lightOn, ppfd, placement, quality }: { lightOn: boolean; ppfd:
  * it fresh children, which would make it render the map again mid-frame and blink the
  * reflections.
  */
-const Studio = memo(function Studio({ resolution }: { resolution: number }) {
-  return (
-    <Environment resolution={resolution} frames={1}>
-      <Lightformer form="rect" intensity={2.2} position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
-      <Lightformer form="rect" intensity={4} position={[-5, 2.2, 1.5]} rotation={[0, Math.PI / 2, 0]} scale={[2.4, 3.6, 1]} />
-      <Lightformer form="rect" intensity={0.8} position={[5, 1.5, -1]} rotation={[0, -Math.PI / 2, 0]} scale={[4, 2, 1]} />
-      <Lightformer form="rect" intensity={0.5} position={[0, 1, -6]} scale={[10, 3, 1]} color="#cfe0d6" />
-    </Environment>
-  );
+/** Bright panels around the jar, for the glass and leaves to reflect: [intensity, position, rotation, scale, colour]. */
+const PANELS: [number, [number, number, number], [number, number, number], [number, number], string][] = [
+  [2.2, [0, 5, 0], [Math.PI / 2, 0, 0], [8, 8], '#ffffff'],
+  [4, [-5, 2.2, 1.5], [0, Math.PI / 2, 0], [2.4, 3.6], '#ffffff'],
+  [0.8, [5, 1.5, -1], [0, -Math.PI / 2, 0], [4, 2], '#ffffff'],
+  [0.5, [0, 1, -6], [0, 0, 0], [10, 3], '#cfe0d6'],
+];
+
+/**
+ * The studio light the jar reflects: the panels above, rendered once into an environment
+ * map with three's PMREMGenerator. (drei's Environment does the same, but brings loaders
+ * for HDR, EXR and gain-map files we never use: about 40 KB compressed.)
+ */
+const Studio = memo(function Studio() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useLayoutEffect(() => {
+    const room = new THREE.Scene();
+    const plane = new THREE.PlaneGeometry(1, 1);
+    for (const [intensity, position, rotation, [w, h], color] of PANELS) {
+      const m = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide, toneMapped: false }));
+      m.position.set(...position);
+      m.rotation.set(...rotation);
+      m.scale.set(w, h, 1);
+      room.add(m);
+    }
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const target = pmrem.fromScene(room, 0, 0.1, 100);
+    pmrem.dispose();
+    plane.dispose();
+    room.traverse((o) => (o as THREE.Mesh).isMesh && ((o as THREE.Mesh).material as THREE.Material).dispose());
+    scene.environment = target.texture;
+    return () => {
+      if (scene.environment === target.texture) scene.environment = null;
+      target.dispose();
+    };
+  }, [gl, scene]);
+  return null;
 });
 
 /** The soft shadow under the jar, drawn once per vessel; memoised for the same reason as Studio. */
