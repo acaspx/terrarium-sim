@@ -122,11 +122,12 @@ const leafCache = new Map<string, THREE.BufferGeometry>();
  * A leaf: base at the origin, tip along +Y, upper face toward -Z.
  * `curl` bends the tip down (toward +Z), `cup` lifts the edges.
  */
-export function leafGeometry(len: number, wid: number, curl = 0.25, cup = 0.25, shape: 'ovate' | 'round' | 'narrow' = 'ovate') {
-  const key = `${len}|${wid}|${curl}|${cup}|${shape}`;
+export function leafGeometry(len: number, wid: number, curl = 0.25, cup = 0.25, shape: 'ovate' | 'round' | 'narrow' | 'heart' = 'ovate', wave = 0) {
+  const key = `${len}|${wid}|${curl}|${cup}|${shape}|${wave}`;
   const hit = leafCache.get(key);
   if (hit) return hit;
-  const g = new THREE.PlaneGeometry(1, 1, 4, 8);
+  // A rippled margin needs more rows along the leaf to show.
+  const g = new THREE.PlaneGeometry(1, 1, wave ? 6 : 4, wave ? 36 : 8);
   const pos = g.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < pos.count; i++) {
     const u = pos.getX(i) * 2;
@@ -134,11 +135,14 @@ export function leafGeometry(len: number, wid: number, curl = 0.25, cup = 0.25, 
     const outline =
       shape === 'round' ? Math.sin(Math.PI * Math.pow(v, 0.75)) :
       shape === 'narrow' ? Math.sin(Math.PI * v) * (1 - 0.3 * v) :
+      // Broad at the base and drawn to a point, like the creeping fig's small leaves.
+      shape === 'heart' ? Math.sin(Math.PI * Math.pow(v, 0.62)) * (1 - 0.15 * v) :
       Math.sin(Math.PI * Math.pow(v, 0.8));
     const hw = (wid / 2) * outline;
     const x = u * hw;
     const y = v * len;
-    const z = curl * v * v * len - Math.abs(u) * hw * cup;
+    // wave: a rippled margin, as on a bird's nest fern; strongest at the edge.
+    const z = curl * v * v * len - Math.abs(u) * hw * cup + wave * hw * u * u * Math.sin(v * Math.PI * 11);
     pos.setXYZ(i, -x, y, z);
   }
   // Mirroring x flips the winding, so the front (upper) face now looks toward -Z.
@@ -236,72 +240,113 @@ function fittonia(p: PlantInput): Part[] {
   ];
 }
 
+/**
+ * Creeping fig: several runners spreading over the soil from the crown, branching as they
+ * go; the longest heads for the glass and climbs it, as the plant does. Small heart-shaped
+ * leaves alternate along each runner, pressed flat to whatever it creeps over.
+ */
 function creepingFig(p: PlantInput): Part[] {
   const total = 0.15 + 2.2 * p.s * p.s;
-  // Head for the glass, favouring the back wall where it is seen through the jar.
-  const az = Math.PI + (p.rng() - 0.5) * 1.6;
-  const dx = Math.sin(az);
-  const dz = Math.cos(az);
-  const px = Math.cos(az);
-  const pz = -Math.sin(az);
-  const run = Math.max(0.05, p.wallDist(dx, dz, 0) - 0.035);
-  const groundRun = Math.min(total, run);
-  const pts: THREE.Vector3[] = [];
+  const runners = 1 + Math.round(3 * p.s);
   const leaves: Part['instances'] = [];
-  const step = 0.03;
-  for (let d = 0, k = 0; d <= total; d += step, k++) {
-    let pt: THREE.Vector3;
-    let onWall = false;
-    if (d <= groundRun) {
-      const w = Math.sin(d * 11) * 0.03;
-      const x = dx * d + px * w;
-      const z = dz * d + pz * w;
-      pt = new THREE.Vector3(x, p.groundAt(x, z) + 0.008, z);
-    } else {
-      const h = d - groundRun;
-      const wd = Math.max(0.02, p.wallDist(dx, dz, h) - 0.03);
-      const w = Math.sin(h * 7) * 0.05;
-      pt = new THREE.Vector3(dx * wd + px * w, h + p.groundAt(dx * run, dz * run), dz * wd + pz * w);
-      if (pt.y > p.ceiling) break;
-      onWall = true;
-    }
-    pts.push(pt);
-    if (d > 0.02) {
+  const stems: THREE.BufferGeometry[] = [];
+  const young = new THREE.Color('#8fbf5a');
+  for (let r = 0; r < runners; r++) {
+    // The first runner gets most of the growth and heads for the back glass; the others
+    // wander off over the soil.
+    const climbs = r === 0;
+    const length = climbs ? total * (runners > 1 ? 0.55 : 1) : (total * 0.45) / (runners - 1);
+    const az = climbs ? Math.PI + (p.rng() - 0.5) * 1.6 : r * 2.4 + p.rng() * 0.8;
+    const dx = Math.sin(az);
+    const dz = Math.cos(az);
+    const px = Math.cos(az);
+    const pz = -Math.sin(az);
+    const run = Math.max(0.05, p.wallDist(dx, dz, 0) - 0.035);
+    const groundRun = climbs ? Math.min(length, run) : Math.min(length, run * 0.9);
+    const wobble = p.rng() * 10;
+    const pts: THREE.Vector3[] = [];
+    for (let d = 0, k = 0; d <= length; d += 0.025, k++) {
+      let pt: THREE.Vector3;
+      let onWall = false;
+      if (d <= groundRun) {
+        const w = Math.sin(d * 11 + wobble) * 0.035;
+        const x = dx * d + px * w;
+        const z = dz * d + pz * w;
+        pt = new THREE.Vector3(x, p.groundAt(x, z) + 0.006, z);
+      } else if (climbs) {
+        const h = d - groundRun;
+        const wd = Math.max(0.02, p.wallDist(dx, dz, h) - 0.03);
+        const w = Math.sin(h * 7 + wobble) * 0.05;
+        pt = new THREE.Vector3(dx * wd + px * w, h + p.groundAt(dx * run, dz * run), dz * wd + pz * w);
+        if (pt.y > p.ceiling) break;
+        onWall = true;
+      } else {
+        break;
+      }
+      pts.push(pt);
+      if (d < 0.02) continue;
+      // Alternate sides, a pair of leaves now and then where it branches.
       const side = k % 2 ? 1 : -1;
       const sz = (0.75 + 0.35 * p.rng()) * (0.85 + 0.15 * p.turgor);
-      const c = tinted(d > total - 0.15 ? p.leaf.clone().lerp(new THREE.Color('#8fbf5a'), 0.35) : p.leaf, p.health, p.rng);
+      const tip = d > length - 0.12;
+      const c = tinted(tip ? p.leaf.clone().lerp(young, 0.35) : p.leaf, p.health, p.rng);
       leaves.push({
         matrix: onWall
           ? at(pt, 0.15 + (1 - p.turgor) * 0.4, az, side * (0.6 + p.rng() * 0.5), sz)
-          : at(pt, 1.25 + (1 - p.turgor) * 0.25, az + side * (Math.PI / 2) + (p.rng() - 0.5) * 0.6, 0, sz),
+          : at(pt, 1.35 + (1 - p.turgor) * 0.2, az + side * (Math.PI / 2) + (p.rng() - 0.5) * 0.7, (p.rng() - 0.5) * 0.3, sz),
         color: c,
       });
+      if (!onWall && k % 5 === 0 && p.rng() < 0.6) {
+        leaves.push({ matrix: at(pt, 1.35, az - side * (Math.PI / 2) + (p.rng() - 0.5) * 0.7, 0, sz * 0.85), color: tinted(p.leaf, p.health, p.rng) });
+      }
     }
+    if (pts.length >= 2) stems.push(taperedTube(pts, 0.0045, 0.0025, Math.max(8, pts.length * 2), 5));
   }
   const parts: Part[] = [
-    { geometry: leafGeometry(0.05, 0.045, 0.08, 0.2, 'round'), material: glossyLeafMat(), instances: leaves, owned: false },
+    { geometry: leafGeometry(0.048, 0.044, 0.06, 0.22, 'heart'), material: glossyLeafMat(), instances: leaves, owned: false },
   ];
-  if (pts.length >= 2) parts.push({ geometry: taperedTube(pts, 0.005, 0.003, Math.max(8, pts.length * 2), 5), material: stemMat(stemColor(p.accent, p.health)), owned: true });
+  if (stems.length) parts.push({ geometry: mergeAll(stems), material: stemMat(stemColor(p.accent, p.health)), owned: true });
   return parts;
 }
 
+/**
+ * Baby tears: a low, dense cushion of tiny round leaves on thread-like stems. A shaded
+ * mound underneath stands in for the tangle of stems, so no soil shows through; the
+ * leaves lie over its surface, flat on top and tilting out at the edges.
+ */
 function babyTears(p: PlantInput): Part[] {
-  const n = 22 + Math.round(90 * p.s);
-  const w = 0.05 + 0.15 * p.s;
-  const h = (0.03 + 0.08 * p.s) * (0.45 + 0.55 * p.turgor);
+  const w = 0.05 + 0.16 * p.s;
+  const h = (0.025 + 0.07 * p.s) * (0.45 + 0.55 * p.turgor);
+  const mound = new THREE.SphereGeometry(1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+  const pos = mound.attributes.position as THREE.BufferAttribute;
+  const seed = p.rng() * 50;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    // Lumpy, as a cushion grows unevenly; held a little under the leaves.
+    const lump = 1 + 0.1 * Math.sin(x * 7 + seed) * Math.cos(z * 6 + seed);
+    pos.setXYZ(i, x * w * lump * 0.92, Math.max(0, pos.getY(i) * h * lump * 0.8 - 0.004), z * w * lump * 0.92);
+  }
+  mound.computeVertexNormals();
+  const shade = tinted(p.accent, p.health, p.rng, 0).multiplyScalar(0.38);
+  const n = 160 + Math.round(620 * p.s);
   const leaves: Part['instances'] = [];
   for (let i = 0; i < n; i++) {
     const a = p.rng() * Math.PI * 2;
-    const rr = Math.sqrt(p.rng());
+    const rr = Math.sqrt(p.rng()) * 1.05;
     const x = Math.cos(a) * rr * w;
     const z = Math.sin(a) * rr * w;
-    const y = h * Math.sqrt(Math.max(0, 1 - rr * rr)) * (0.75 + 0.25 * p.rng()) + p.groundAt(x, z);
+    const top = h * Math.sqrt(Math.max(0, 1 - Math.min(1, rr) ** 2));
+    const y = top * (0.85 + 0.2 * p.rng()) + p.groundAt(x, z);
     leaves.push({
-      matrix: at(new THREE.Vector3(x, y, z), 0.9 + rr * 0.6 + (1 - p.turgor) * 0.3, Math.atan2(x, z) + (p.rng() - 0.5), 0, 0.8 + 0.4 * p.rng()),
+      matrix: at(new THREE.Vector3(x, y, z), 1.25 + rr * 0.35 + (1 - p.turgor) * 0.3, a + Math.PI / 2 + (p.rng() - 0.5) * 2, (p.rng() - 0.5) * 0.6, 0.75 + 0.45 * p.rng()),
       color: tinted(i % 3 ? p.leaf : p.accent, p.health, p.rng, 0.12),
     });
   }
-  return [{ geometry: leafGeometry(0.022, 0.022, 0.1, 0.3, 'round'), material: glossyLeafMat(), instances: leaves, owned: false }];
+  return [
+    { geometry: mound, material: new THREE.MeshStandardMaterial({ color: shade, roughness: 0.9 }), owned: true, ownsMaterial: true },
+    { geometry: leafGeometry(0.023, 0.023, 0.08, 0.3, 'round'), material: glossyLeafMat(), instances: leaves, owned: false },
+  ];
 }
 
 function spikeMoss(p: PlantInput): Part[] {
@@ -404,29 +449,43 @@ function fanGeometry() {
   return _fan;
 }
 
+/**
+ * Maidenhair: thin black stems rise, then arch outward and down. Side branches alternate
+ * along the arch, each hung with a few fan-shaped leaflets that droop from it.
+ */
 function maidenhair(p: PlantInput): Part[] {
   const n = 3 + Math.round(5 * p.s);
   const leaves: Part['instances'] = [];
   const stems: THREE.BufferGeometry[] = [];
+  const leaflet = (pt: THREE.Vector3, az: number, size: number) =>
+    leaves.push({
+      // Hanging, face out: leaflets droop more as the plant wilts.
+      matrix: at(pt, 1.75 + p.rng() * 0.4 + (1 - p.turgor) * 0.35, az + (p.rng() - 0.5) * 0.8, (p.rng() - 0.5) * 0.5, size),
+      color: tinted(p.leaf, p.health, p.rng, 0.1),
+    });
   for (let i = 0; i < n; i++) {
     const az = (i / n) * Math.PI * 2 + p.rng() * 0.8;
     const dx = Math.sin(az);
     const dz = Math.cos(az);
-    const ht = (0.14 + 0.4 * p.s) * (0.7 + 0.3 * p.rng());
-    const bend = 0.05 + 0.1 * p.rng() + (1 - p.turgor) * 0.22;
+    const ht = (0.14 + 0.36 * p.s) * (0.75 + 0.3 * p.rng());
+    const reach = (0.12 + 0.22 * p.s) * (0.8 + 0.4 * p.rng()) + (1 - p.turgor) * 0.06;
     const p0 = new THREE.Vector3(0, 0, 0);
-    const p1 = new THREE.Vector3(dx * bend * 0.2, ht, dz * bend * 0.2);
-    const p2 = new THREE.Vector3(dx * bend * 1.8, ht * (0.55 + 0.45 * p.turgor), dz * bend * 1.8);
-    stems.push(taperedTube([p0, bezier(p0, p1, p2, 0.3), bezier(p0, p1, p2, 0.6), bezier(p0, p1, p2, 0.85), p2], 0.0035, 0.0018, 14, 4));
-    for (let t = 0.42; t <= 1.001; t += 0.055) {
+    const p1 = new THREE.Vector3(dx * reach * 0.2, ht * 1.2, dz * reach * 0.2);
+    const p2 = new THREE.Vector3(dx * reach, ht * (0.45 + 0.25 * p.turgor), dz * reach);
+    stems.push(taperedTube([p0, bezier(p0, p1, p2, 0.3), bezier(p0, p1, p2, 0.6), bezier(p0, p1, p2, 0.85), p2], 0.0032, 0.0014, 16, 4));
+    // Across the frond, for the side branches.
+    const px = Math.cos(az);
+    const pz = -Math.sin(az);
+    for (let t = 0.45, k = 0; t <= 0.96; t += 0.085, k++) {
       const b = bezier(p0, p1, p2, t);
-      for (const side of [-1, 1]) {
-        leaves.push({
-          matrix: at(b, 1.0 + p.rng() * 0.4 + (1 - p.turgor) * 0.4, az + side * (Math.PI / 2) + (p.rng() - 0.5) * 0.4, (p.rng() - 0.5) * 0.4, (1.1 - 0.5 * t) * (0.85 + 0.3 * p.rng())),
-          color: tinted(p.leaf, p.health, p.rng, 0.1),
-        });
-      }
+      const side = k % 2 ? 1 : -1;
+      const len = (0.035 + 0.035 * p.s) * (1.1 - 0.5 * t);
+      const end = b.clone().add(new THREE.Vector3((px * side + dx * 0.4) * len, -len * 0.45, (pz * side + dz * 0.4) * len));
+      const mid = b.clone().lerp(end, 0.5).add(new THREE.Vector3(0, len * 0.12, 0));
+      stems.push(taperedTube([b, mid, end], 0.0013, 0.0008, 6, 3));
+      for (const f of [0.35, 0.65, 1]) leaflet(bezier(b, mid, end, f), az + side * (Math.PI / 2), (1.25 - 0.35 * t) * (0.85 + 0.3 * p.rng()));
     }
+    leaflet(p2, az, 0.8);
   }
   return [
     { geometry: mergeAll(stems), material: stemMat('#2a231e'), owned: true },
@@ -447,7 +506,8 @@ function birdsNestFern(p: PlantInput): Part[] {
     });
   }
   return [
-    { geometry: leafGeometry(0.3, 0.07, 0.35, 0.18, 'narrow'), material: strapMat(), instances: fronds, owned: false },
+    // Wider than a strap, with the rippled margin of a real Asplenium frond.
+    { geometry: leafGeometry(0.3, 0.085, 0.35, 0.2, 'narrow', 0.22), material: strapMat(), instances: fronds, owned: false },
     // The nest: a brown, hairy crown at the base.
     { geometry: crownGeometry(), material: stemMat('#4a3324'), owned: false },
   ];
@@ -463,18 +523,20 @@ function crownGeometry() {
 }
 
 function lemonButtonFern(p: PlantInput): Part[] {
-  const n = 4 + Math.round(6 * p.s);
+  // A clump of fronds arching out from the crown, the youngest upright in the middle.
+  const n = 5 + Math.round(9 * p.s);
   const leaves: Part['instances'] = [];
   const stems: THREE.BufferGeometry[] = [];
   for (let i = 0; i < n; i++) {
-    const az = (i / n) * Math.PI * 2 + p.rng() * 0.7;
+    const az = i * 2.39996 + p.rng() * 0.5;
     const dx = Math.sin(az);
     const dz = Math.cos(az);
-    const ht = (0.1 + 0.26 * p.s) * (0.75 + 0.3 * p.rng());
-    const lean = 0.03 + 0.05 * p.rng() + (1 - p.turgor) * 0.15;
+    const young = i / n;
+    const ht = (0.1 + 0.24 * p.s) * (0.75 + 0.3 * p.rng());
+    const lean = (0.12 - 0.08 * young) * (0.7 + 0.6 * p.rng()) + (1 - p.turgor) * 0.15;
     const p0 = new THREE.Vector3(0, 0, 0);
     const p1 = new THREE.Vector3(dx * lean * 0.3, ht, dz * lean * 0.3);
-    const p2 = new THREE.Vector3(dx * lean * 2, ht * (0.75 + 0.25 * p.turgor), dz * lean * 2);
+    const p2 = new THREE.Vector3(dx * lean * 2, ht * (0.6 + 0.2 * young + 0.2 * p.turgor), dz * lean * 2);
     stems.push(taperedTube([p0, bezier(p0, p1, p2, 0.35), bezier(p0, p1, p2, 0.7), p2], 0.003, 0.0015, 12, 4));
     for (let t = 0.12; t <= 1.001; t += 0.06) {
       const b = bezier(p0, p1, p2, t);
