@@ -11,6 +11,7 @@ import { condensationMaterial, rimMaterial, WIPES } from './condensation.js';
 import { disturb, interactiveHit, isTap, JarRig, newMotion, nudge, useMotion, type Motion } from './rig.js';
 import { CameraRig, type Focus, type View } from './camera.js';
 import { downgrade, useQuality, type Quality } from './quality.js';
+import { cue, useAmbience } from '../sound.js';
 import { Critters } from './Critters.js';
 import { deadLeafGeometry, driftwoodGeometry, stoneGeometry } from './hardscape.js';
 import { dishSpot, obstaclesFor, q, stoneSize, stoneSpot, toUv, useLayout, woodHome, woodPath, type Layout, type Obstacle, type Placed } from './layout.js';
@@ -47,7 +48,12 @@ export interface Terrarium3DProps {
  * and brown with health, the crew moves, mold spreads, and the lights follow
  * the photoperiod.
  */
+/** Where a tap was, left to right, as a stereo position. */
+const panOf = (e: ThreeEvent<MouseEvent>) => clamp(e.point.x / 1.5, -0.8, 0.8);
+
 export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, onPlace, view = 'front', focus = 'all' }: Terrarium3DProps) {
+  // The air in the jar, and drips as often as its glass is wet enough to drip.
+  useAmbience(q(state.climate.condensationIndex, 0.05), state.climate.lightOn, lively);
   const bg = useCssColor('--bg');
   const quality = useQuality();
   // One per jar view, kept across re-renders: how the jar is being handled.
@@ -289,6 +295,7 @@ function Vessel({ L, spec, cond, night, lively, quality }: { L: Layout; spec: Te
   // Both walls the line of sight crosses are cleared, so you can actually see in.
   const wipe = (e: ThreeEvent<MouseEvent>) => {
     if (!isTap(e) || !filmMesh.current) return;
+    cue('glass', panOf(e));
     // r3f reports one hit per object; cast again for where the line leaves through the far wall.
     const glassHits = new THREE.Raycaster(e.ray.origin, e.ray.direction).intersectObject(e.object, false).slice(0, 2);
     for (const h of glassHits) {
@@ -492,6 +499,7 @@ function Layers({ L, spec, wet, reservoir, waterlogged }: { L: Layout; spec: Ter
   // Tapping the soil startles whatever lives near that spot.
   const tapSoil = (e: ThreeEvent<MouseEvent>) => {
     if (!isTap(e)) return;
+    cue('soil', panOf(e));
     e.stopPropagation();
     const p = e.object.worldToLocal(e.point.clone());
     disturb(motion, p.x, p.z);
@@ -873,6 +881,7 @@ function Plant({ id, speciesId, L, x, z, s, turgor, health, dry, live, handlers,
   const tap = (e: ThreeEvent<MouseEvent>) => {
     if (!isTap(e)) return;
     e.stopPropagation();
+    cue('leaf', panOf(e));
     spring.current.sqv += 3.2;
     spring.current.vz += (spring.current.phase % 2 ? 1 : -1) * 1.5;
     onTap();

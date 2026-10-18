@@ -547,7 +547,8 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 /* ------------------------------------------------------------------ inbox */
 .topbar-tools { display: flex; align-items: center; gap: 10px; }
 .inbox { position: relative; }
-.inbox-button { position: relative; width: 38px; height: 38px; border-radius: 10px; }
+.inbox-button, .tool-button { position: relative; width: 38px; height: 38px; border-radius: 10px; }
+.tool-button[aria-pressed='true'] { color: var(--moss); }
 .inbox-count {
   position: absolute; top: -6px; right: -6px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
   display: grid; place-items: center; font: 700 11px/1 var(--font-body); background: var(--rust); color: #fff; box-shadow: 0 0 0 2px var(--bg);
@@ -574,7 +575,9 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .inbox-foot .saved-check { margin: 0; }
 .inbox-foot .hint { font-size: 12px; }
 @media (max-width: 640px) {
-  .topbar-tools { width: 100%; justify-content: space-between; }
+  .topbar-tools { width: 100%; }
+  /* Sound and inbox together at the left; the clock at the right. */
+  .topbar-tools > :last-child { margin-left: auto; }
   .inbox-panel { right: auto; left: 0; }
 }
 

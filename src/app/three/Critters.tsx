@@ -6,6 +6,7 @@ import type { TerrariumState } from '../../engine/index.js';
 import type { Layout, Obstacle } from './layout.js';
 import { clamp, hashSeed } from './noise.js';
 import { shakeOf, useMotion } from './rig.js';
+import { cue } from '../sound.js';
 import { critterGeometry, critterMaterials, type Body } from './critterModels.js';
 import { shellTexture } from './textures.js';
 import { footprint, insideFp, pointIn } from './vessel.js';
@@ -132,6 +133,7 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
     seen.current = now;
     const shaken = shakeOf(motion) > 0.8;
     if (!fresh.length && !shaken) return;
+    let ran: Bug | null = null;
     for (const b of bugs) {
       const near = fresh.find((d) => Math.hypot(b.x - d.x, b.z - d.z) < STARTLE_RADIUS);
       if (!near && !shaken) continue;
@@ -143,11 +145,14 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
       } else if (look.motion === 'crawl') {
         b.flee = now + 1.5 + Math.random();
         if (near) b.h = Math.atan2(b.x - near.x, b.z - near.z);
+        ran = b;
       } else {
         // Gnats lift off.
         b.vy += 0.15;
       }
     }
+    // Crabs are big enough to hear running off.
+    if (ran && look.sideways) cue('scuttle', clamp(ran.x / 1.5, -0.8, 0.8));
   };
 
   const write = (dt: number) => {

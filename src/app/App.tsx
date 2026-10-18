@@ -8,6 +8,7 @@ import { startClock } from './store.js';
 import { PageBoundary } from './ui/PageBoundary.js';
 import { TimeControl } from './ui/TimeControl.js';
 import { Inbox } from './ui/Inbox.js';
+import { SoundToggle } from './ui/SoundToggle.js';
 import { startNotifier } from './notify.js';
 
 const subscribeHash = (fn: () => void) => {
@@ -68,6 +69,7 @@ export function App() {
           </nav>
         </div>
         <div className="topbar-tools">
+          <SoundToggle />
           <Inbox />
           <TimeControl />
         </div>
