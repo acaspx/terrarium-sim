@@ -109,6 +109,8 @@ function engine(): Engine | null {
   tone.connect(master);
 
   eng = { ctx, master, room, jar, noise, resume: () => void ctx.resume() };
+  // Bring the volume up for whatever jar is already on screen.
+  update();
   return eng;
 }
 
@@ -210,6 +212,15 @@ function scheduleDrip() {
 }
 
 if (typeof document !== 'undefined') {
+  // Browsers start audio only from something the visitor does. When sound was left on
+  // last visit, the first tap or key press anywhere starts it again.
+  const wake = () => {
+    if (!on || eng?.ctx.state === 'running') return;
+    engine()?.resume();
+    update();
+  };
+  document.addEventListener('pointerdown', wake, true);
+  document.addEventListener('keydown', wake, true);
   // In a background tab, fade out and let the audio hardware sleep.
   document.addEventListener('visibilitychange', () => {
     if (!eng) return;

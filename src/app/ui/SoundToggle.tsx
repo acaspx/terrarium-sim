@@ -6,7 +6,7 @@ export function SoundToggle() {
   const on = useSoundOn();
   return (
     <button type="button" className="icon-button tool-button" aria-pressed={on} onClick={() => setSoundOn(!on)}
-      aria-label={on ? 'Sound on' : 'Sound off'} title={on ? 'Turn sound off' : 'Turn sound on: drips, the hush of humid air, taps on glass and soil'}>
+      aria-label="Sound" title={on ? 'Turn sound off' : 'Turn sound on: drips, the hush of humid air, taps on glass and soil'}>
       {on ? <Volume2 size={18} aria-hidden="true" /> : <VolumeX size={18} aria-hidden="true" />}
     </button>
   );

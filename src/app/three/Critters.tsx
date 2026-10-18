@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { makeRng } from '../../engine/core/math.js';
@@ -96,27 +96,50 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
   id: string; look: Look; n: number; L: Layout; lively: boolean; quality: 'high' | 'low'; obstacles: Obstacle[];
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
-  // The shared body plus this colony's own gait per animal. The body's buffers are shared,
-  // so this wrapper is never disposed (that would free them for every other colony too).
+  // Room for the most of this species ever drawn: as the colony grows and shrinks only the
+  // count drawn changes, so nothing is rebuilt or left behind on the graphics card.
+  const capacity = Math.max(1, look.count(Number.MAX_SAFE_INTEGER, false));
+  // This colony's own copy of the body, with a gait per animal; freed with the colony.
   const geometry = useMemo(() => {
-    const base = critterGeometry(look.body, quality);
-    const g = new THREE.BufferGeometry();
-    for (const [name, attr] of Object.entries(base.attributes)) g.setAttribute(name, attr);
-    g.groups = base.groups.map((gr) => ({ ...gr }));
-    g.setAttribute('gait', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 4), 4));
+    const g = critterGeometry(look.body, quality).clone();
+    g.setAttribute('gait', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
     return g;
-  }, [look.body, quality, n]);
+  }, [look.body, quality, capacity]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
   const mats = useMemo(() => critterMaterials({ shell: look.color, limb: look.limb, accent: look.accent, eye: look.eye, rough: look.rough, map: look.shell ? shellTexture(look.shell) : null, sideways: look.sideways }), [look]);
+  // The shell pattern texture is shared and cached; only the materials are this colony's.
+  useEffect(() => () => mats.forEach((m) => m.dispose()), [mats]);
+  // Read at spawn time, so moving the stone does not respawn the whole colony.
+  const obstaclesNow = useRef(obstacles);
+  obstaclesNow.current = obstacles;
   const bugs = useMemo<Bug[]>(() => {
     const r = makeRng(hashSeed(id) + n);
     return Array.from({ length: n }, () => {
       // A few tries for a spot that is not under the stone or in the dish.
       let [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
-      for (let k = 0; k < 12 && blocked(obstacles, x, z, look.scale[0]); k++) [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      for (let k = 0; k < 12 && blocked(obstaclesNow.current, x, z, look.scale[0]); k++) [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
       const a = r() * Math.PI * 2;
       return { x, z, y: L.gy + 0.2 + r() * 0.6, h: a, t: r() * 4, vx: Math.cos(a) * 0.1, vy: 0, vz: Math.sin(a) * 0.1, phase: r() * 10, flee: 0, curl: 0, rest: 0, walk: r() * 3, step: r() * 6, gait: 0 };
     });
-  }, [id, n, L, obstacles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, n, L]);
+  // When the stone is moved onto some of them, those step out to its edge; the rest stay put.
+  useEffect(() => {
+    const reach = look.scale[0] * 2;
+    for (const b of bugs) {
+      const o = obstacles.find((o) => Math.hypot(b.x - o.x, b.z - o.z) < o.r + reach);
+      if (!o) continue;
+      const a = Math.atan2(b.z - o.z, b.x - o.x);
+      const x = o.x + Math.cos(a) * (o.r + reach * 1.2);
+      const z = o.z + Math.sin(a) * (o.r + reach * 1.2);
+      if (insideFp(L.groundFp, x, z, 0.02)) {
+        b.x = x;
+        b.z = z;
+      } else {
+        [b.x, b.z] = pointIn(L.groundFp, Math.random() * 2 - 1, Math.random() * 2 - 1);
+      }
+    }
+  }, [bugs, obstacles, L, look.scale]);
   const tmp = useMemo(() => ({
     m: new THREE.Matrix4(), q: new THREE.Quaternion(), e: new THREE.Euler(), p: new THREE.Vector3(),
     s: new THREE.Vector3(...look.scale),
@@ -162,7 +185,8 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
     if (dt > 0) startle();
     const now = motion.clock;
     const gaits = geometry.attributes.gait as THREE.InstancedBufferAttribute;
-    for (let i = 0; i < bugs.length; i++) {
+    mesh.count = Math.min(bugs.length, capacity);
+    for (let i = 0; i < mesh.count; i++) {
       const b = bugs[i]!;
       let y: number;
       let scale = tmp.s;
@@ -243,7 +267,7 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
   if (n === 0) return null;
   return (
     <>
-      <instancedMesh key={n} ref={ref} args={[geometry, mats, n]} castShadow frustumCulled={false} userData={{ critter: id }} />
+      <instancedMesh ref={ref} args={[geometry, mats, capacity]} castShadow frustumCulled={false} userData={{ critter: id }} />
     </>
   );
 }
