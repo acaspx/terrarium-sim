@@ -1,108 +1,88 @@
-# Deploying the 3D view and the playground
+# Deploying and running the site
 
-Checklist for taking `experiment/3d-playground` live. Steps marked **(you)**
-need your Vercel account; everything else can be checked from the
-preview URL.
+The site is static (Vite, `dist/`) plus one Vercel function, `api/shelf.ts`, for the
+community shelf. Jars live in each visitor's browser; only shared jars, usernames,
+likes and follows are on the server, in Redis.
 
-## 1. Storage for the playground (you)
+## Setting up
 
-The playground is one Vercel function, `api/shelf.ts`, backed by any Redis (one function keeps it to one database connection per running instance).
-Without storage the rest of the site works and the playground says it is not
-connected.
+1. **Project.** Import the repo in Vercel. `vercel.json` sets the build, routes
+   `/api/terrariums`, `/api/keepers` and `/s/ID` to the one function, and caches the
+   hashed files in `/assets/` for a year.
+2. **Database.** In the project's **Storage** tab, create a Redis database (Redis, or
+   Upstash for Redis; the free plan is plenty) and connect it to **Production** (and
+   Preview, if you want the shelf on previews). Then **redeploy**: environment
+   variables only reach deployments built after they were set.
+   - The app looks for `REDIS_URL` or `KV_URL` (any prefix), or Upstash's REST pair
+     (`KV_REST_API_URL`/`_TOKEN`, `UPSTASH_REDIS_REST_URL`/`_TOKEN`), which it turns into
+     a `rediss://` address. One function means one connection per running instance;
+     Redis Cloud's free plan allows about 30.
+   - Preview and production share the database unless you connect a second one.
+3. **Analytics (optional).** In the project, open **Analytics** and enable Web
+   Analytics. The app reports page views itself (its pages live after a `#`), grouped
+   by kind of page with ids and names left out: `/`, `/new`, `/jar/[id]`,
+   `/community`, `/community/[id]`, `/u/[name]`, `/keeper`. No cookies.
+4. **Moderators (optional).** Claim your username on the site first, then add
+   `MODERATORS` (comma-separated usernames) for Production and redeploy. Moderators
+   see **Remove (moderator)** on any shared jar and **Ban** on keepers' shelves. A
+   listed name cannot be claimed and a moderator cannot delete their account, so
+   nobody can take a moderator's name; list a name only once it is yours.
 
-- [ ] In the Vercel dashboard, open the project, then **Storage → Create Database**
-      and pick a Redis (Redis, or Upstash for Redis). The free plan is plenty to start.
-- [ ] Connect it to this project for **Production and Preview**. That sets
-      `REDIS_URL` (or `KV_URL`); the app connects with it. Upstash's REST pair
-      (`KV_REST_API_URL`/`TOKEN` or `UPSTASH_REDIS_REST_URL`/`TOKEN`) works too, and
-      so do prefixed names such as `STORAGE_REDIS_URL`.
-- [ ] Redeploy the preview after adding the variables. Environment variables
-      only reach deployments built after they were set.
+## Checking it works
 
-- [ ] Optional: add `MODERATORS` (comma-separated usernames, e.g. `fern_keeper`)
-      for Production. Moderators see **Remove (moderator)** on any shared jar and
-      **Ban** on keepers' shelves. A ban removes all of that keeper's jars and stops
-      the name signing in. Claim your username on the site first, then list it here
-      and redeploy: a listed name cannot be claimed, and a moderator cannot delete
-      their account, so nobody can take a moderator's name.
+- `curl https://<site>/api/terrariums?sort=recent` returns `{"items":[...],"next":...}`.
+  A `503` means no storage: its `setup` field names the storage variables the
+  deployment has (names only, never values) and what is missing.
+- `curl https://<site>/s/anything` returns a small HTML page (with the jar's preview
+  tags when the id exists).
+- In a browser: claim a test name, share a jar, like it, open its `/s/` link, then
+  delete the test account from the account page (its jars go with it).
 
-Preview and production share one database unless you connect a second one.
-Fine for now; test shares from the preview will show up in production's
-gallery, so delete them (step 3) before you announce anything.
+Preview deployments sit behind Vercel's login, so `curl` gets a 401 there; check
+previews in a logged-in browser, or locally.
 
-## 2. Check the API on the preview (the part most likely to break)
+## Locally
 
-The function imports shared TypeScript from `src/playground/`. This has run in
-the Vite dev server and in tests, but not yet on Vercel.
+`npm run dev` runs the same API inside Vite, with an in-memory shelf seeded with a few
+example keepers and jars. Put `REDIS_URL` (and `MODERATORS`) in `.env` to use a real
+database. The store tests also run against a real Redis when given one:
 
-Open these in a browser where you are logged in to Vercel (preview deployments
-are usually behind Vercel Authentication, so `curl` gets a 401):
+```bash
+redis-server --port 6390 --save '' --daemonize yes
+REDIS_TEST_URL=redis://localhost:6390 npx vitest run test/playground.test.ts
+```
 
-- [ ] `https://<preview-url>/api/terrariums` should return `{"items":[],"next":null}`.
-  - `503` "not connected to storage": the env vars are missing, or the deploy
-    predates them. The response's `setup` field says which storage variable
-    names the deployment has (names only, never values). Redo step 1.
-  - `500` or `FUNCTION_INVOCATION_FAILED`: open **Deployments → the preview →
-    Functions → api/shelf → Logs** and send the error. The likely fix is
-    bundling the function's imports.
-  - `404`: the function was not deployed; check the build log for `api/`.
+(The database at that address is emptied.)
 
-## 3. Smoke test on the preview
+## Looking after the shelf
 
-On desktop:
+What is automatic: sharing needs a username; usernames, jar names, notes and journal
+lines pass a word filter (`src/playground/moderation.ts`, extend its lists as needed);
+5 new usernames per hour per connection, 6 shares per hour per keeper, 3 likes per
+connection per jar a day; a jar reported from three different connections is hidden.
 
-- [ ] The shelf loads with the example jar, and the drawn jars look right.
-- [ ] A jar page shows the 3D jar, with pH, soil air, VPD and daily light under Conditions.
-- [ ] Builder: each recipe previews in 3D, the day buttons step through the forecast,
-      and **Arrange plants** lets you drag a plant (the forecast updates).
-- [ ] Plant a terrarium, then **Share to playground** with a name and note.
-      You land on its playground page.
-- [ ] Like it (count goes to 1 and stays there on refresh), copy the link and open
-      it in a private window, then **Remove from playground** from the original
-      browser. It disappears from the gallery.
-- [ ] Dark mode: switch the OS theme and check the gallery and a jar page.
-- [ ] A jar saved before this branch still opens (the example jar from a previous
-      visit counts).
+By hand, in the database's console or `redis-cli` (keys start `tr:`):
 
-## 4. Phones (you)
+| To | Do |
+|---|---|
+| Remove a jar | As a moderator, **Remove (moderator)** on its page. Or remove its id from `tr:recent`, `tr:liked` and `tr:by:<username>`, and delete `tr:item:<id>`. The id is the last part of its URL. |
+| Retire a username | As a moderator, **Ban** on its shelf (jars go, name stays taken). Or delete `tr:keeper:<username>` and remove its jars as above (name becomes free). |
+| Unhide a reported jar | `ZADD tr:recent <createdAt> <id>`, `ZADD tr:liked <likes> <id>`, `ZADD tr:by:<username> <createdAt> <id>`, and `DEL tr:reports:<id>`. |
+| Help someone who lost their recovery code | Codes cannot be reset. If they prove the name is theirs another way, delete `tr:keeper:<username>` and let them claim it again. |
 
-The 3D view uses transmissive glass, shadows and a condensation shader. It has
-only been tested in headless desktop Chrome.
+Other keys: `tr:card:<id>` (the link-preview picture), `tr:voters:<id>`,
+`tr:following:<name>` and `tr:followers:<name>` (sets), `tr:rl:*` (rate limits, expire
+on their own).
 
-- [ ] An iPhone (Safari) and a mid-range Android (Chrome): open a jar page and the
-      builder. Is it smooth when turning the jar? Does the phone get warm within a minute?
-- [ ] Dragging to turn the jar does not trap page scrolling badly.
-- [ ] If it stutters: the fix is a lower-quality mode for weak devices (no
-      transmission, fewer shadows), not removing the 3D view. Note the device.
+## When something breaks
 
-## 5. Before strangers can post (you decide)
+- **Shelf says it is not connected:** see the `503` above; usually the database is not
+  connected to Production, or the deploy predates it.
+- **"Could not reach the community shelf":** the function could not connect to Redis.
+  **Deployments → the deployment → Functions → api/shelf → Logs** has the error. It
+  reconnects on the next request.
+- **A bad deploy:** **Deployments → the previous production deploy → Instant Rollback**,
+  or revert the merge commit on `master` and push.
 
-What is in place: sharing needs a username; usernames, jar names and notes pass
-a word filter (`src/playground/moderation.ts`, extend its lists as needed) and are
-length-limited; 5 new usernames per hour per IP; 6 shares per hour per keeper;
-one like per visitor; anything reported by 3 people is hidden; only a jar's keeper
-can remove it.
-
-- [ ] Know how to remove a jar by hand: as a moderator, use **Remove (moderator)** on the jar's page. By hand, in the
-      database's console (or `redis-cli`), remove its ID from
-      the `tr:recent`, `tr:liked` and `tr:by:<username>` sorted sets (the ID is the
-      last part of the jar's URL).
-- [ ] Know how to retire a username: delete `tr:keeper:<username>`. Its jars stay
-      until removed as above; the name becomes free to claim again.
-- [ ] Lost recovery codes cannot be reset. If someone proves a name is theirs another
-      way, delete `tr:keeper:<username>` and let them claim it again.
-
-## 6. Merge and check production
-
-- [ ] Merge the PR. Vercel deploys `master` to production.
-- [ ] Repeat step 2 on the production URL (no login needed there).
-- [ ] Share one jar from production, check it appears, then remove it.
-
-## Rolling back
-
-- Fastest: in Vercel, **Deployments → previous production deploy → Instant
-  Rollback**.
-- Or revert the merge commit on `master` and push.
-
-Saved jars live in each visitor's browser and are unaffected either way: the
-new soil and placement data are optional, so an older build simply ignores them.
+Saved jars live in visitors' browsers and survive rollbacks: newer fields (placement of
+wood and stone, plant positions, frames) are optional, so an older build ignores them.
