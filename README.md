@@ -19,37 +19,50 @@ npm run sim        # the engine from the command line
 
 ## Deploy on Vercel
 
-Jars are saved in the browser's local storage. The community shelf is one Vercel
+Jars are saved in each visitor's browser. The community shelf is one Vercel
 function (`api/shelf.ts`) backed by Redis.
 
-1. Push this repo to GitHub.
-2. In Vercel, choose **Add New → Project** and import the repo. Vercel reads
-   `vercel.json` (build `npm run build`, output `dist`).
-3. For the community shelf, add a Redis database in Vercel's Storage tab (Redis, or
-   Upstash for Redis) and connect it to the project. It sets `REDIS_URL`, which the
-   app uses (Upstash's REST variables work too). See docs/DEPLOY.md.
-   Without them the community shelf says it is not connected, and the rest of the app works.
-4. Every push to `main` deploys; every branch gets a preview URL.
+1. Import the repo in Vercel (**Add New → Project**). It reads `vercel.json`.
+2. For the community shelf, create a Redis database in the project's **Storage** tab
+   and connect it for Production. Redeploy.
+3. Optional: turn on **Analytics** in the project (page views, cookieless), and set
+   `MODERATORS` if you want moderators.
+4. Every push to `master` deploys; every branch gets a preview.
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for the full checklist.
+[docs/DEPLOY.md](docs/DEPLOY.md) has the details: checking it works, looking after the
+shelf, and what to do when something breaks.
 
-In `npm run dev` the same API runs inside the Vite server. With no Redis
-variables in `.env` it uses an in-memory shelf seeded with a few example keepers and jars.
+In `npm run dev` the same API runs inside the Vite server. With no Redis variables in
+`.env` it uses an in-memory shelf seeded with a few example keepers and jars. To use a
+real Redis locally, put `REDIS_URL` in `.env`.
 
 ## What is in the app
 
-- **Shelf:** every terrarium as a living jar on a shelf, with a tag showing its day, health and most pressing issue. A compare table for tracking several at once, and a "since you last looked" summary.
-- **Builder:** six steps (vessel, layers, plants, clean-up crew, placement, name) starting from a recipe or blank, with a live preview, inline warnings, and a 90-day forecast that reruns as you design.
-- **Jar view:** conditions, issues with one-tap fixes, care actions (mist, air out, feed, remove mold, prune, change lid or placement), plant and animal rosters, trends and a journal.
-- **Time:** paused, real time (jars keep living while you are away), a day per second, or a week per second.
-- **Handle the jar:** drag to spin it; flick it and it rocks on its base and settles, with the plants swaying. Tap a plant for its name and health, tap the soil to startle the animals (springtails hop, isopods run, pill bugs roll up), tap mushrooms for a puff of spores, and tap fogged glass to wipe a clear spot that mists over again.
-- **Material swatches:** builder choices are small round previews rendered from the same 3D materials: soils, drainage, wood and stone, glass vessels and lids, each plant and animal, and the light of each placement.
-- **Arrange:** drag plants into place in the 3D builder. Tall plants shade what grows beneath them, and the forecast reruns as you move them.
-- **Room:** the scene around the jar is its placement: a window whose sky follows the jar's day and night, a grow light overhead, or a dim corner.
-- **Soil and air readings:** pH (from the mix, slowly acidifying), soil air (sours when waterlogged), vapour pressure deficit and daily light integral.
-- **Fungi:** driftwood in a humid jar sprouts a flush of mushrooms every month or two.
-- **3D jar:** the builder and jar pages show the terrarium as a lit 3D scene you can turn: transmissive glass, a condensation shader (mist, beads, then runs that wipe clear trails), soil that darkens and turns glossy when wet, a reservoir that fills, procedural plants that droop with turgor and brown with health, and a crew that hops and wanders. The builder can preview the design at any point in its 90-day forecast. Browsers without WebGL 2 get the drawn jar.
-- **Community shelf:** pick a username (no email or password: you get a recovery code to sign in elsewhere) and share jars you are proud of. Each keeper has a shelf of their own at `#/u/name`. Anyone can browse, like and plant a copy without an account. Only a jar's keeper can remove it; jars reported by three people are hidden; usernames, jar names and notes pass a word filter.
+**Building and keeping jars**
+
+- **Shelf:** every terrarium as a living jar with a tag for its day, health and most pressing issue; a compare table; a "since you last looked" summary.
+- **Builder:** vessel, layers, plants, clean-up crew, placement and name, from a recipe or blank, with a live 3D preview, inline warnings and a 90-day forecast that reruns as you design. Tap a plant to add one and **−** to take one out.
+- **Arrange:** drag plants, the driftwood and the stone in the 3D builder (tap the wood to turn it). Tall plants shade what grows beneath them, and the forecast reruns. The stone finds an open, visible spot until you move it.
+- **Jar page:** conditions, issues with one-tap fixes, care actions (mist, air out, feed, remove mold, prune, change lid or placement), rosters, trends, a time-lapse and a journal.
+- **Time:** paused, real time (jars keep living while you are away), a day per second or a week per second.
+- **Inbox:** a bell counts what happened in your jars since you last looked; optional browser notifications while the site is open in another tab.
+
+**The 3D jar**
+
+- Transmissive glass, a condensation shader (mist, beads, runs that wipe clear trails), soil that darkens when wet, a filling reservoir, and a room that follows the placement: a window whose sky follows the jar's day, a grow light, a dim corner.
+- Plants are procedural and follow the simulation: they droop with turgor, brown with health and grow with biomass. Creeping fig runs over the soil and climbs the glass, baby tears forms a cushion, maidenhair arches.
+- Driftwood with bark furrows, a mossy stone, fallen leaves that curl as they dry, a water dish where there are crabs, mushrooms on wood in a humid jar.
+- Animals walk: isopods amble and stop, legs stepping in a wave; springtails hop; pill bugs roll up when startled; vampire crabs sit still, scuttle off sideways and raise their claws when you tap near them; gnats fly.
+- Handle it: drag to spin, flick to rock it, tap plants, soil, mushrooms and fogged glass.
+- Optional sound: the hush of humid air, drips as often as the glass is wet enough to drip, and small sounds for what you touch.
+- Weak devices get a lighter mode; browsers without WebGL 2 get the drawn jar.
+
+**Community shelf**
+
+- Pick a username (no email or password: a recovery code signs you in elsewhere) and share jars. Shared jars keep growing on their own; each keeper has a shelf at `#/u/name`.
+- Anyone can browse, like and plant a copy. Keepers can follow each other (a **Following** tab collects their new jars) and delete their account.
+- Share links (`/s/ID`) show the jar's picture, name and note when pasted into chat apps and social sites.
+- Safety: a word filter on names and notes, rate limits, reports (three people, counted by connection, hide a jar), and optional moderators who can remove jars and ban keepers.
 
 ## Layout
 
@@ -58,28 +71,37 @@ src/
   engine/          the simulation: no DOM, no React, fully testable
     core/          types, math, config (every tunable constant)
     environment/   geometry, climate, water cycle, gas exchange
-    organisms/     species catalog (data), plants, fauna, decomposition
+    organisms/     species catalog (data), plants, fauna (incl. predation), decomposition
     sim/           hourly loop, care actions, health and alerts
-    spec.ts        customization: options catalog, spec -> setup, checks, forecast, recipes
+    spec.ts        options catalog, spec -> setup, builder checks, forecast, recipes
   app/             the React interface
-    jar/Jar.tsx    the living jar, drawn from simulation state (shelf, thumbnails, fallback)
-    jar/Jar3D.tsx  lazy loader for the 3D jar
-    three/         the 3D scene: vessels, procedural plants and textures, the condensation shader
-    playground.ts  client for the playground API
-    screens/       Shelf, Builder, Detail
-    store.ts       persistence, clock, daily history, alert transitions
-  playground/      shared by API and app: keepers, submission schema and validation, word filter, the handler, stores
-api/               Vercel functions for the community shelf
+    screens/       Shelf, Builder, Detail (a jar), Playground (community shelf, keepers, shared jars)
+    jar/           the drawn jar (shelf, fallback) and the lazy 3D loader
+    three/         the 3D scene: vessel and layout, plants, critter models and movement,
+                   hardscape (stone, driftwood, leaves), condensation shader, room, stills
+    ui/            shared pieces: swatches, inbox, sound toggle, time-lapse
+    store.ts       persistence, clock, history, alerts, news for the inbox
+    playground.ts  client for the community API
+    sound.ts       generated sound (Web Audio)
+    analytics.ts   page views, grouped by kind of page
+  playground/      shared by API and app: the handler, Redis and memory stores, schema, word filter
+api/shelf.ts       the one Vercel function; vercel.json routes /api/* and /s/* to it
 scripts/cli.ts     command-line runner
 test/              behaviour tests: each one is a claim about how a real jar behaves
 docs/
   RESEARCH.md      the science behind each organism, with sources
   MODEL.md         the rules, and what is still a guess
-  CUSTOMIZATION.md vendor research and the v1 customization scope
+  DEPLOY.md        deploying and running the site
+  CUSTOMIZATION.md the original research and scope for the builder
 ```
 
 ## Adding an organism
 
-Add an entry to `src/engine/organisms/species.ts`. Organisms are described by
-parameters, so most need no new code. To draw a new plant, add a drawing
-function in `src/app/jar/Jar.tsx`.
+1. **Simulation:** add an entry to `src/engine/organisms/species.ts`. Organisms are
+   described by parameters (ranges, life cycle, diet, prey), so most need no new code.
+   Add sources to `docs/RESEARCH.md`, and a crew size to `CREW_COUNTS` in `spec.ts` for animals.
+2. **3D:** a plant needs a builder in `src/app/three/plants.ts` (`BUILDERS`, `PLANT_COLORS`).
+   An animal needs a look in `src/app/three/Critters.tsx` (`LOOKS`), using one of the
+   body plans in `critterModels.ts` or a new one.
+3. **Drawn jar:** a small drawing in `src/app/jar/Jar.tsx`, for the shelf and devices without WebGL.
+4. **Tests:** a claim about how it behaves in `test/ecology.test.ts`.

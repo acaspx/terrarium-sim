@@ -45,6 +45,7 @@ Each species is three numbers: eggs, juveniles, adults.
 - Food: demand is split across mold and detritus by preference; a shortfall in one is made up from the other. `fed` = eaten / demand.
 - Births scale with `fed^2` and with remaining room. Starvation, drought, drowning and heat add mortality.
 - Eating mineralises: CO2 and nitrogen go back to the plants. 30% of eaten detritus returns as frass.
+- **Predation:** a species may name `prey`. When mold and litter fall short of its demand, it catches the rest from the prey colony by body mass (`bodyG`), at most `catchPerHour` (1%) of that colony an hour. Vampire crabs hunt springtails this way, as keepers rely on.
 - Hungry species with `diet.plant > 0` bite plants.
 
 | Species | Behaviour that emerges |
@@ -52,6 +53,8 @@ Each species is three numbers: eggs, juveniles, adults.
 | Springtail | Booms on the first mold bloom, crashes when it is gone, settles at what litter fall supports. Dies within weeks in a dry jar. |
 | Dwarf white isopod | Slow build over months; needs it damp. |
 | Rough woodlouse | Tolerates drier jars; out-eats a small jar's litter and declines unless fed. |
+| Isopod morphs (dairy cow, rubber ducky, magic potion) | Dairy cows breed fast and turn to the plants in a small jar; rubber duckies are slow and want it warm and damp; magic potions cope with drier jars. |
+| Vampire crab | Needs feeding: fed monthly, a trio holds on for years in a warm 40 L case and breeds; unfed it lives a while on springtails, and in a small jar dies out within a year. Thins the springtail colony. |
 | Fungus gnat | Arrives only when substrate stays saturated or wet and moldy; persists while it stays wet. |
 
 ## Mold and decay
@@ -79,7 +82,7 @@ Each species is three numbers: eggs, juveniles, adults.
 
 ## Calibration: what is still a guess
 
-Constants live in `src/core/config.ts`; species numbers in `src/organisms/species.ts`.
+Constants live in `src/engine/core/config.ts`; species numbers in `src/engine/organisms/species.ts`.
 
 | Constant | Status |
 |---|---|
@@ -91,7 +94,9 @@ Constants live in `src/core/config.ts`; species numbers in `src/organisms/specie
 | Plant light and temperature | Sourced where possible (RESEARCH.md, section 2b); spike moss and maidenhair light are still qualitative |
 | Sunlight's extra heat (`heatPerPpfdSun`) | Physics of the solar spectrum; the exact factor is estimated |
 | Heat damage rate | Estimated |
-| Isopod and gnat reproduction | Estimated |
+| Isopod and gnat reproduction | Partly sourced (RESEARCH.md, section 2b); the rest estimated |
+| Vampire crab | Temperature, lifespan, brood time and group size from care sheets; time to adulthood, intake and effective birth rate estimated |
+| Predation rate (`catchPerHour`), springtail body mass | Estimated: tuned so a fed crab trio and a springtail colony persist together |
 | Plant heights, shade reach and depth | Estimated |
 | pH ranges per plant, acidification and buffering rates | Estimated; starting pH of each mix is typical of its ingredients |
 | Fungal growth, fruiting thresholds and flush timing | Estimated, tuned so a humid jar with wood sees mushrooms within its first two or three months |
@@ -102,3 +107,5 @@ Constants live in `src/core/config.ts`; species numbers in `src/organisms/specie
 - No seasons unless you change the room settings.
 - Populations are continuous numbers, so very small colonies do not fluctuate randomly.
 - Charcoal has no modelled effect (its benefit is debated and I found no quantitative basis).
+- Where the wood and stone sit, and the crabs' water dish, are only drawn: the simulation does not model them (the builder says so). The stone's volume and the wood's food are modelled; their positions are not.
+- Crabs cannot escape an open top in the simulation; the builder warns instead.
