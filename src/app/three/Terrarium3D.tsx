@@ -124,7 +124,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion
         {spec.fauna.some((f) => f.speciesId === 'vampire-crab' && f.count > 0) && <WaterDish L={L} />}
         <Plants L={L} spec={spec} state={state} dry={q(dry, 0.1)} onArrange={onArrange} />
         <Mushrooms L={L} amount={q(state.pools.mushroomG ?? 0, 0.01)} seed={spec.seed} wood={spec.placed?.wood} />
-        <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} />
+        <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} obstacles={obstacles} />
         <Mold L={L} amount={q(mold, 0.05)} />
         <Critters L={L} state={state} lively={lively} quality={quality} obstacles={obstacles} />
         <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} quality={quality} />
@@ -913,7 +913,7 @@ const LEAF_KINDS: DeadLeaf[] = ['oak', 'beech', 'willow'];
 const LEAF_SIZE: Record<DeadLeaf, number> = { oak: 0.26, beech: 0.21, willow: 0.28 };
 
 /** Fallen leaves of three kinds, curled as they dry, darker as they rot. One draw per kind. */
-function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }) {
+function Litter({ L, amount, seed, obstacles }: { L: Layout; amount: number; seed: number; obstacles: Obstacle[] }) {
   const byKind = useMemo(() => {
     const r = makeRng(seed + 404);
     const n = Math.round(amount * 28);
@@ -923,6 +923,11 @@ function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }
     for (let i = 0; i < n; i++) {
       const kind = LEAF_KINDS[Math.floor(r() * LEAF_KINDS.length)]!;
       const [x, z] = pointIn(L.groundFp, r() * 2 - 1, r() * 2 - 1);
+      // Not under the stone, and not floating in the crabs' water.
+      if (obstacles.some((o) => Math.hypot(x - o.x, z - o.z) < o.r)) {
+        r(); r(); r(); r(); r(); r();
+        continue;
+      }
       // Lying on the soil, turned any way, a little tilted where it rests on another.
       const e = new THREE.Euler((r() - 0.5) * 0.25, r() * Math.PI * 2, (r() - 0.5) * 0.25, 'YXZ');
       const s = LEAF_SIZE[kind] * (0.75 + r() * 0.6);
@@ -933,7 +938,7 @@ function Litter({ L, amount, seed }: { L: Layout; amount: number; seed: number }
       });
     }
     return out;
-  }, [L, amount, seed]);
+  }, [L, amount, seed, obstacles]);
   const geometry = useMemo(() => deadLeafGeometry(), []);
   const mats = useMemo(() => new Map(LEAF_KINDS.map((k) => [k, new THREE.MeshStandardMaterial({
     map: deadLeafTexture(k), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.85,
