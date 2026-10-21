@@ -208,9 +208,41 @@ function Attention({ j }: { j: JarRecord }) {
   );
 }
 
+/** Mold below this shows no patches in the 3D jar (see Mold in Terrarium3D): only a trace is left. */
+const visibleMold = (st: TerrariumState) => st.pools.moldG > 0.01 * st.container.substrateL;
+
 function Care({ j }: { j: JarRecord }) {
   const s = j.state;
   const act = (fn: (st: TerrariumState) => void) => store.act(j.id, fn);
+  // What the last action did. Their effects are small next to a whole jar (20 ml against
+  // half a litre in the soil), so say so, with the reading that moved.
+  const [note, setNote] = useState<{ text: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 6000);
+    return () => clearTimeout(t);
+  }, [note]);
+  const say = (text: string) => setNote({ text, at: Date.now() });
+  const soil = () => Math.round(j.state.climate.moisture * 100);
+  const onMist = () => {
+    const before = soil();
+    act((st) => care.mist(st, 20));
+    say(`Misted 20 ml. Soil ${before}% → ${soil()}%.`);
+  };
+  const onAirOut = () => {
+    act((st) => care.airOut(st, 6));
+    say('Lid off for 6 hours (6 jar hours: the clock above sets how fast). The glass clears and the soil dries a little; then it goes back on.');
+  };
+  const onFeed = () => {
+    const before = j.state.pools.detritusG;
+    act((st) => care.feed(st, 3));
+    say(`Added 3 g of leaf litter. Food for the clean-up crew: ${before.toFixed(0)} g → ${j.state.pools.detritusG.toFixed(0)} g.`);
+  };
+  const onRemoveMold = () => {
+    if (!visibleMold(j.state)) return say('No visible mold to remove.');
+    act((st) => care.removeMold(st));
+    say('Removed most of the visible mold. Spores stay, so it can come back while the jar is damp and still.');
+  };
   const vessel = VESSELS.find((v) => v.id === j.spec.vessel)!;
   const placement = PLACEMENTS.find((p) => p.ppfd === s.container.light.ppfd && p.hours === s.container.light.photoperiodH)?.id
     ?? (GROW_LIGHTS.some((g) => g.ppfd === s.container.light.ppfd) && s.container.light.photoperiodH === 12 ? 'grow-light' : j.spec.placement);
@@ -219,13 +251,15 @@ function Care({ j }: { j: JarRecord }) {
     <section className="block" aria-labelledby="care" data-focus="all">
       <h2 id="care">Care</h2>
       <div className="care-actions">
-        <button type="button" className="button" onClick={() => act((st) => care.mist(st, 20))}><Droplets size={16} aria-hidden="true" /> Mist</button>
-        <button type="button" className="button" onClick={() => act((st) => care.airOut(st, 6))} disabled={airing > 0}>
+        <button type="button" className="button" onClick={onMist}><Droplets size={16} aria-hidden="true" /> Mist</button>
+        <button type="button" className="button" onClick={onAirOut} disabled={airing > 0}>
           <Wind size={16} aria-hidden="true" /> {airing > 0 ? `Airing out, ${airing} h left` : 'Air out for 6 hours'}
         </button>
-        <button type="button" className="button" onClick={() => act((st) => care.feed(st, 3))}><Leaf size={16} aria-hidden="true" /> Add leaf litter</button>
-        <button type="button" className="button" onClick={() => act((st) => care.removeMold(st))}><Eraser size={16} aria-hidden="true" /> Remove mold</button>
+        <button type="button" className="button" onClick={onFeed}><Leaf size={16} aria-hidden="true" /> Add leaf litter</button>
+        <button type="button" className="button" onClick={onRemoveMold}><Eraser size={16} aria-hidden="true" /> Remove mold</button>
       </div>
+      {/* Keyed so a repeated action shows (and fades in) again. */}
+      <p className="care-note" role="status" key={note?.at}>{note?.text ?? '\u00a0'}</p>
       <div className="care-settings">
         <div className="field">
           <span className="field-label">Lid</span>
