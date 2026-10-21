@@ -54,7 +54,7 @@ export function Room({ placement, lightOn, wall, top, baseY }: { placement: Plac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl]);
   useFrame((_, dt) => {
-    const target = lightOn ? (dim ? 0.18 : 0.42) : 0.04;
+    const target = lightOn ? (dim ? 0.18 : 0.42) : 0.1;
     wallMat.emissiveIntensity += (target - wallMat.emissiveIntensity) * (1 - Math.exp(-dt * 3));
   });
   return (

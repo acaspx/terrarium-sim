@@ -51,10 +51,21 @@ export interface Terrarium3DProps {
 /** Where a tap was, left to right, as a stereo position. */
 const panOf = (e: ThreeEvent<MouseEvent>) => clamp(e.point.x / 1.5, -0.8, 0.8);
 
+/**
+ * The room's wall takes the page's background, so the scene sits in the page. A dark
+ * theme's background is near black, which at night left the jar in darkness: there the
+ * wall is lifted to a dim room colour instead.
+ */
+function roomWall(bg: string) {
+  const c = new THREE.Color(bg);
+  const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return lum < 0.1 ? `#${c.lerp(new THREE.Color('#5a6862'), 0.38).getHexString()}` : bg;
+}
+
 export default function Terrarium3D({ spec, state, lively = true, autoRotate = false, className, label, onArrange, onPlace, view = 'front', focus = 'all' }: Terrarium3DProps) {
   // The air in the jar, and drips as often as its glass is wet enough to drip.
   useAmbience(q(state.climate.condensationIndex, 0.05), state.climate.lightOn, lively);
-  const bg = useCssColor('--bg');
+  const bg = roomWall(useCssColor('--bg'));
   const quality = useQuality();
   // One per jar view, kept across re-renders: how the jar is being handled.
   const motion = useMemo(newMotion, []);
@@ -127,7 +138,7 @@ export function JarScene({ spec, state, lively, wall, onArrange, onPlace, motion
         <Litter L={L} amount={q(litter, 0.05)} seed={spec.seed} obstacles={obstacles} />
         <Mold L={L} amount={q(mold, 0.05)} />
         <Critters L={L} state={state} lively={lively} quality={quality} obstacles={obstacles} />
-        <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} quality={quality} />
+        <Vessel L={L} spec={spec} cond={cl.condensationIndex} night={!cl.lightOn} lively={lively} quality={quality} airing={!!state.ventRevert && state.hour < state.ventRevert.hour} />
       </JarRig>
     </>
   );
@@ -146,13 +157,14 @@ function Lights({ lightOn, ppfd, placement, quality }: { lightOn: boolean; ppfd:
   useFrame((_, dt) => {
     const k = 1 - Math.exp(-dt * 3);
     if (key.current) {
-      const target = lightOn ? 0.7 + 1.7 * level : 0.22;
+      // Night is moonlit, not black: dimmer and cooler than day, with the jar still readable.
+      const target = lightOn ? 0.7 + 1.7 * level : 0.7;
       key.current.intensity += (target - key.current.intensity) * k;
       key.current.color.lerp(lightOn ? dayColor : night, k);
     }
-    if (hemi.current) hemi.current.intensity += ((lightOn ? 0.55 : 0.08) - hemi.current.intensity) * k;
+    if (hemi.current) hemi.current.intensity += ((lightOn ? 0.55 : 0.28) - hemi.current.intensity) * k;
     const env = scene as THREE.Scene & { environmentIntensity?: number };
-    if (env.environmentIntensity !== undefined) env.environmentIntensity += ((lightOn ? 1 : 0.22) - env.environmentIntensity) * k;
+    if (env.environmentIntensity !== undefined) env.environmentIntensity += ((lightOn ? 1 : 0.42) - env.environmentIntensity) * k;
   });
   const pos: [number, number, number] = grow ? [0.4, 6, 0.8] : [-4, 3.6, 2.6];
   return (
@@ -281,7 +293,11 @@ function FrameRateWatch() {
   return null;
 }
 
-function Vessel({ L, spec, cond, night, lively, quality }: { L: Layout; spec: TerrariumSpec; cond: number; night: boolean; lively: boolean; quality: Quality }) {
+function Vessel({ L, spec, cond, night, lively, quality, airing }: {
+  L: Layout; spec: TerrariumSpec; cond: number; night: boolean; lively: boolean; quality: Quality;
+  /** Aired out for a few hours (a care action): the lid is lifted aside. */
+  airing: boolean;
+}) {
   const { shape } = L;
   const glass = useGlass(quality);
   const geo = useMemo(() => glassGeometry(shape), [shape]);
@@ -331,11 +347,12 @@ function Vessel({ L, spec, cond, night, lively, quality }: { L: Layout; spec: Te
   }, [film, L.gy, shape]);
 
   const cracked = spec.lid === 'cracked';
-  const clocheTilt = spec.vessel === 'cloche' && cracked;
+  // A cloche's dome is its lid: tipped up a little when cracked, further while airing out.
+  const clocheTilt = spec.vessel === 'cloche' && (cracked || airing);
 
   return (
     <group>
-      <group position={clocheTilt ? [0, 0.05, 0] : [0, 0, 0]} rotation={clocheTilt ? [0, 0, -0.035] : [0, 0, 0]}>
+      <group position={clocheTilt ? [0, airing ? 0.14 : 0.05, 0] : [0, 0, 0]} rotation={clocheTilt ? [0, 0, airing ? -0.09 : -0.035] : [0, 0, 0]}>
         <mesh geometry={geo} material={materials} renderOrder={1} onClick={wipe} />
         <mesh ref={filmMesh} geometry={geo} material={film} scale={[0.985, 0.995, 0.985]} renderOrder={2} />
         {/* The rim light reads as a bright edge over refracting glass, but washes over plain transparent glass like a haze. */}
@@ -344,7 +361,7 @@ function Vessel({ L, spec, cond, night, lively, quality }: { L: Layout; spec: Te
         {spec.vessel === 'cloche' && <Knob y={shape.top + 0.05} glass={glass} />}
         {shape.kind === 'square' && <Frame shape={shape} wardian={spec.vessel === 'wardian'} />}
       </group>
-      {!openTop && <Lid L={L} spec={spec} glass={glass} />}
+      {!openTop && <Lid L={L} spec={spec} glass={glass} airing={airing} />}
       {spec.vessel === 'cloche' && (
         <mesh position={[0, -0.06, 0]} castShadow receiveShadow>
           <cylinderGeometry args={[1.12, 1.15, 0.12, 64]} />
@@ -424,9 +441,9 @@ function Frame({ shape, wardian }: { shape: Extract<Shape, { kind: 'square' }>; 
   );
 }
 
-function Lid({ L, spec, glass }: { L: Layout; spec: TerrariumSpec; glass: THREE.Material }) {
+function Lid({ L, spec, glass, airing }: { L: Layout; spec: TerrariumSpec; glass: THREE.Material; airing: boolean }) {
   const { shape } = L;
-  const cracked = spec.lid === 'cracked';
+  const cracked = spec.lid === 'cracked' || airing;
   const corkMat = useMemo(() => new THREE.MeshStandardMaterial({ map: corkTexture(), bumpMap: corkTexture(), bumpScale: 2, roughness: 0.9 }), []);
   if (shape.kind === 'round') {
     const [r, top] = shape.profile[shape.profile.length - 1]!;
@@ -434,13 +451,13 @@ function Lid({ L, spec, glass }: { L: Layout; spec: TerrariumSpec; glass: THREE.
     if (spec.lid === 'cork' || spec.vessel === 'bottle') {
       const h = spec.vessel === 'bottle' ? 0.26 : 0.2;
       return (
-        <mesh position={[0, top - h * 0.35 + (cracked ? 0.14 : 0), 0]} material={corkMat} castShadow>
+        <mesh position={[airing ? r * 0.35 : 0, top - h * 0.35 + (airing ? 0.32 : cracked ? 0.14 : 0), 0]} rotation={[0, 0, airing ? -0.35 : 0]} material={corkMat} castShadow>
           <cylinderGeometry args={[r * 1.02, r * 0.94, h, 48]} />
         </mesh>
       );
     }
     return (
-      <group position={[cracked ? 0.06 : 0, top + 0.025 + (cracked ? 0.06 : 0), 0]} rotation={[0, 0, cracked ? -0.09 : 0]}>
+      <group position={[airing ? r * 0.45 : cracked ? 0.06 : 0, top + 0.025 + (airing ? 0.28 : cracked ? 0.06 : 0), 0]} rotation={[0, 0, airing ? -0.45 : cracked ? -0.09 : 0]}>
         <mesh material={glass}>
           <cylinderGeometry args={[r + 0.06, r + 0.06, 0.05, 72]} />
         </mesh>
@@ -454,7 +471,7 @@ function Lid({ L, spec, glass }: { L: Layout; spec: TerrariumSpec; glass: THREE.
   }
   if (!shape.roof) {
     return (
-      <mesh position={[cracked ? 0.35 : 0, shape.wallTop + 0.018, 0]} material={glass}>
+      <mesh position={[airing ? shape.hx * 0.9 : cracked ? 0.35 : 0, shape.wallTop + 0.018, 0]} material={glass}>
         <boxGeometry args={[shape.hx * 2 + 0.04, 0.03, shape.hz * 2 + 0.04]} />
       </mesh>
     );
