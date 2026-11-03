@@ -126,14 +126,21 @@ export function leafGeometry(len: number, wid: number, curl = 0.25, cup = 0.25, 
   const key = `${len}|${wid}|${curl}|${cup}|${shape}|${wave}`;
   const hit = leafCache.get(key);
   if (hit) return hit;
-  // A rippled margin needs more rows along the leaf to show.
-  const g = new THREE.PlaneGeometry(1, 1, wave ? 6 : 4, wave ? 36 : 8);
+  // Tessellate by size: a fittonia leaf fills a good part of the screen up close and needs
+  // rows to curve smoothly; a baby tears leaf is a few pixels and needs only its outline.
+  // A rippled margin needs many rows along the leaf to show.
+  const big = len >= 0.1;
+  const tiny = len < 0.03;
+  const cols = wave ? 6 : big ? 8 : 4;
+  const rows = wave ? 36 : big ? 16 : tiny ? (shape === 'round' ? 7 : 5) : 8;
+  const g = new THREE.PlaneGeometry(1, 1, cols, rows);
   const pos = g.attributes.position as THREE.BufferAttribute;
   for (let i = 0; i < pos.count; i++) {
     const u = pos.getX(i) * 2;
     const v = pos.getY(i) + 0.5;
     const outline =
-      shape === 'round' ? Math.sin(Math.PI * Math.pow(v, 0.75)) :
+      // Nearly circular, on a short stalk: the full width comes early and holds.
+      shape === 'round' ? Math.pow(Math.sin(Math.PI * Math.pow(v, 0.85)), 0.55) :
       shape === 'narrow' ? Math.sin(Math.PI * v) * (1 - 0.3 * v) :
       // Broad at the base and drawn to a point, like the creeping fig's small leaves.
       shape === 'heart' ? Math.sin(Math.PI * Math.pow(v, 0.62)) * (1 - 0.15 * v) :
@@ -142,7 +149,13 @@ export function leafGeometry(len: number, wid: number, curl = 0.25, cup = 0.25, 
     const x = u * hw;
     const y = v * len;
     // wave: a rippled margin, as on a bird's nest fern; strongest at the edge.
-    const z = curl * v * v * len - Math.abs(u) * hw * cup + wave * hw * u * u * Math.sin(v * Math.PI * 11);
+    let z = curl * v * v * len - Math.abs(u) * hw * cup + wave * hw * u * u * Math.sin(v * Math.PI * 11);
+    if (big) {
+      // Large leaves pucker between their side veins (quilted, as fittonia's are), and the
+      // margin turns down a touch toward the tip.
+      z += 0.05 * hw * Math.abs(Math.sin(u * Math.PI * 1.5)) * Math.sin(v * Math.PI * 7) * (1 - v * 0.5);
+      z += 0.12 * hw * Math.pow(Math.abs(u), 3) * v;
+    }
     pos.setXYZ(i, -x, y, z);
   }
   // Mirroring x flips the winding, so the front (upper) face now looks toward -Z.
@@ -324,8 +337,10 @@ function babyTears(p: PlantInput): Part[] {
     const x = pos.getX(i);
     const z = pos.getZ(i);
     // Lumpy, as a cushion grows unevenly; held a little under the leaves.
-    const lump = 1 + 0.1 * Math.sin(x * 7 + seed) * Math.cos(z * 6 + seed);
-    pos.setXYZ(i, x * w * lump * 0.92, Math.max(0, pos.getY(i) * h * lump * 0.8 - 0.004), z * w * lump * 0.92);
+    const y = pos.getY(i);
+    const lump = 1 + 0.1 * Math.sin(x * 7 + seed) * Math.cos(z * 6 + seed) * Math.min(1, y * 2.5);
+    const roll = 0.85 + 0.15 * Math.sqrt(y);
+    pos.setXYZ(i, x * w * lump * 0.92 * roll, Math.max(0, y * h * lump * 0.8 - 0.004), z * w * lump * 0.92 * roll);
   }
   mound.computeVertexNormals();
   const shade = tinted(p.accent, p.health, p.rng, 0).multiplyScalar(0.38);
@@ -387,15 +402,18 @@ function cushionMoss(p: PlantInput): Part[] {
   const base = tinted(p.leaf, p.health, p.rng, 0).lerp(pale, p.dry * 0.75);
   // The mound is the shade between the shoots: darker than the shoots on top.
   base.multiplyScalar(0.72);
-  const mound = new THREE.SphereGeometry(1, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+  const mound = new THREE.SphereGeometry(1, 64, 20, 0, Math.PI * 2, 0, Math.PI / 2);
   const pos = mound.attributes.position as THREE.BufferAttribute;
   const seed = p.rng() * 50;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    const bump = 1 + 0.12 * Math.sin(x * 9 + seed) * Math.cos(z * 8 + seed) + 0.06 * Math.sin(x * 23 + z * 19);
-    pos.setXYZ(i, x * w * bump, Math.max(0, y * h * bump - 0.004), z * w * bump);
+    // Lumpy on top, but rolled under at the foot like a real cushion, rather than ending
+    // in a flat, wavy skirt: the bumps fade toward the base and the edge tucks in.
+    const bump = 1 + (0.12 * Math.sin(x * 9 + seed) * Math.cos(z * 8 + seed) + 0.06 * Math.sin(x * 23 + z * 19)) * Math.min(1, y * 2.5);
+    const roll = 0.84 + 0.16 * Math.sqrt(y);
+    pos.setXYZ(i, x * w * bump * roll, Math.max(0, y * h * bump - 0.004), z * w * bump * roll);
   }
   mound.computeVertexNormals();
   const material = new THREE.MeshPhysicalMaterial({
@@ -440,8 +458,37 @@ function tuftGeometry() {
 let _fan: THREE.BufferGeometry | null = null;
 function fanGeometry() {
   if (!_fan) {
+    // A maidenhair pinnule: a fan on a short stalk, its outer margin cut into soft lobes,
+    // the blade cupped a little. Rings out from the stalk, so it can bend.
     const span = Math.PI * 0.85;
-    _fan = new THREE.CircleGeometry(0.024, 12, Math.PI / 2 - span / 2, span);
+    const R = 0.024;
+    const segs = 16;
+    const rings = 2;
+    const pos: number[] = [0, 0, 0];
+    const idx: number[] = [];
+    for (let r = 1; r <= rings; r++) {
+      for (let j = 0; j <= segs; j++) {
+        const a = Math.PI / 2 - span / 2 + (span * j) / segs;
+        const t = r / rings;
+        // Scalloped margin: four soft, rounded lobes across the outer edge.
+        const f = (a - (Math.PI / 2 - span / 2)) / span;
+        const lobe = r === rings ? 1 - 0.035 * (1 - Math.cos(f * Math.PI * 8)) : 1;
+        const rr = R * t * lobe;
+        const x = Math.cos(a) * rr;
+        const y = Math.sin(a) * rr;
+        // Cupped: the edges lift toward the lit face, more toward the rim.
+        const z = -0.18 * R * t * t * Math.abs(Math.cos(a));
+        pos.push(x, y, z);
+      }
+    }
+    const ring = (r: number, j: number) => 1 + (r - 1) * (segs + 1) + j;
+    for (let j = 0; j < segs; j++) idx.push(0, ring(1, j), ring(1, j + 1));
+    for (let r = 1; r < rings; r++) for (let j = 0; j < segs; j++) idx.push(ring(r, j), ring(r + 1, j), ring(r, j + 1), ring(r, j + 1), ring(r + 1, j), ring(r + 1, j + 1));
+    _fan = new THREE.BufferGeometry();
+    _fan.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    _fan.setAttribute('uv', new THREE.Float32BufferAttribute(new Array((pos.length / 3) * 2).fill(0.5), 2));
+    _fan.setIndex(idx);
+    _fan.computeVertexNormals();
     // Bring the lit face to -Z like the other leaves, and lift it off its stalk.
     _fan.rotateY(Math.PI);
     _fan.translate(0, 0.004, 0);
@@ -516,8 +563,16 @@ function birdsNestFern(p: PlantInput): Part[] {
 let _crown: THREE.BufferGeometry | null = null;
 function crownGeometry() {
   if (!_crown) {
-    _crown = new THREE.SphereGeometry(0.022, 12, 8);
-    _crown.scale(1, 0.6, 1);
+    // The nest: a squat, shaggy knot of old frond bases and brown scales.
+    _crown = new THREE.SphereGeometry(0.022, 24, 14);
+    const cp = _crown.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < cp.count; i++) {
+      const x = cp.getX(i), y = cp.getY(i), z = cp.getZ(i);
+      const a = Math.atan2(z, x);
+      const shag = 1 + 0.16 * Math.pow(Math.abs(Math.sin(a * 9 + y * 300)), 3) + 0.06 * Math.sin(a * 23 + y * 900);
+      cp.setXYZ(i, x * shag, y * 0.6, z * shag);
+    }
+    _crown.computeVertexNormals();
   }
   return _crown;
 }

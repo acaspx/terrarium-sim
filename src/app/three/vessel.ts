@@ -17,25 +17,62 @@ const arc = (cx: number, cy: number, r: number, a0: number, a1: number, n: numbe
     return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as [number, number];
   });
 
+/**
+ * Round off every corner of a lathe profile, as blown glass is: each interior point
+ * becomes a short curve between points part-way along its two segments. Long, straight
+ * runs (a jar's wall) stay straight; the short steps of an arc barely move. The ends
+ * (the centre of the floor and the rim) are kept exactly.
+ */
+function fillet(pts: [number, number][], rMax = 0.22): [number, number][] {
+  const out: [number, number][] = [pts[0]!];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i]!;
+    const [ax, ay] = pts[i - 1]!;
+    const [bx, by] = pts[i + 1]!;
+    const la = Math.hypot(ax - px, ay - py);
+    const lb = Math.hypot(bx - px, by - py);
+    // How sharply the profile turns here. Gentle turns (the steps of an arc, a straight
+    // run) are already smooth; only real corners are rounded, with points to match.
+    const dot = ((px - ax) * (bx - px) + (py - ay) * (by - py)) / (la * lb || 1);
+    const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    if (la < 1e-6 || lb < 1e-6 || angle < 0.1) {
+      out.push([px, py]);
+      continue;
+    }
+    // Never more than 45% of either segment, so neighbouring curves don't overlap.
+    const d = Math.min(rMax, la * 0.45, lb * 0.45);
+    const q0x = px + ((ax - px) / la) * d, q0y = py + ((ay - py) / la) * d;
+    const q1x = px + ((bx - px) / lb) * d, q1y = py + ((by - py) / lb) * d;
+    const steps = Math.max(2, Math.ceil(angle / 0.07));
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
+      out.push([a * q0x + b * px + c * q1x, a * q0y + b * py + c * q1y]);
+    }
+  }
+  out.push(pts[pts.length - 1]!);
+  return out;
+}
+
 const BOWL_R = 1.08;
 const BOWL_CY = 1.0;
 
 export const SHAPES: Record<VesselId, Shape> = {
   jar: {
     kind: 'round', top: 2.0,
-    profile: [[0, 0], [0.9, 0], [0.97, 0.03], [1, 0.1], [1, 1.6], [0.97, 1.72], [0.84, 1.82], [0.72, 1.87], [0.72, 2.0]],
+    profile: fillet([[0, 0], [0.9, 0], [0.97, 0.03], [1, 0.1], [1, 1.6], [0.97, 1.72], [0.84, 1.82], [0.72, 1.87], [0.72, 2.0]]),
   },
   bottle: {
     kind: 'round', top: 2.3,
-    profile: [[0, 0], [0.62, 0], [0.88, 0.08], [1.02, 0.3], [1.06, 0.6], [1.02, 0.95], [0.88, 1.2], [0.62, 1.42], [0.34, 1.56], [0.22, 1.66], [0.22, 2.3]],
+    profile: fillet([[0, 0], [0.62, 0], [0.88, 0.08], [1.02, 0.3], [1.06, 0.6], [1.02, 0.95], [0.88, 1.2], [0.62, 1.42], [0.34, 1.56], [0.22, 1.66], [0.22, 2.3]], 0.3),
   },
   cloche: {
     kind: 'round', top: 2.1, openBottom: true,
-    profile: [[0.95, 0], [0.95, 1.15], ...arc(0, 1.15, 0.95, 0.12, Math.PI / 2, 14)],
+    profile: fillet([[0.95, 0], [0.95, 1.15], ...arc(0, 1.15, 0.95, 0.12, Math.PI / 2, 28)]),
   },
   bowl: {
     kind: 'round', top: 1.75,
-    profile: [[0, 0], ...arc(0, BOWL_CY, BOWL_R, -Math.asin(BOWL_CY / BOWL_R), Math.asin(0.75 / BOWL_R), 18)],
+    profile: fillet([[0, 0], ...arc(0, BOWL_CY, BOWL_R, -Math.asin(BOWL_CY / BOWL_R), Math.asin(0.75 / BOWL_R), 36)]),
   },
   cube: { kind: 'square', hx: 0.95, hz: 0.95, wallTop: 1.95, top: 1.95, roof: false },
   wardian: { kind: 'square', hx: 1.0, hz: 0.78, wallTop: 1.3, top: 2.05, roof: true },
@@ -102,7 +139,7 @@ export function insideFp(fp: Footprint, x: number, z: number, margin = 0): boole
 /** The glass itself. */
 export function glassGeometry(shape: Shape): THREE.BufferGeometry {
   if (shape.kind === 'round') {
-    return new THREE.LatheGeometry(shape.profile.map(([r, y]) => new THREE.Vector2(r, y)), 96);
+    return new THREE.LatheGeometry(shape.profile.map(([r, y]) => new THREE.Vector2(r, y)), 128);
   }
   if (!shape.roof) {
     const g = new THREE.BoxGeometry(shape.hx * 2, shape.wallTop, shape.hz * 2);
@@ -128,14 +165,15 @@ export function layerGeometry(shape: Shape, y0: number, y1: number, inset: numbe
     g.translate(0, (y0 + y1) / 2, 0);
     return g;
   }
-  const n = 10;
+  // Enough rows that a layer following a curved wall (a bowl, a bottle) reads as curved through the glass.
+  const n = 28;
   const pts = [new THREE.Vector2(0, y0)];
   for (let i = 0; i <= n; i++) {
     const y = y0 + ((y1 - y0) * i) / n;
     pts.push(new THREE.Vector2(Math.max(0.01, radiusAt(shape, Math.max(0.005, y)) - inset), y));
   }
   pts.push(new THREE.Vector2(0, y1));
-  return new THREE.LatheGeometry(pts, 72);
+  return new THREE.LatheGeometry(pts, 96);
 }
 
 export interface Ground {
