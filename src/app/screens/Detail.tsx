@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Droplets, Eraser, Film, Leaf, Scissors, Share2, Wind } from 'lucide-react';
+import { ArrowLeft, Check, Droplets, Eraser, Film, Leaf, PencilLine, Scissors, Shovel, Share2, Wind } from 'lucide-react';
 import {
-  alerts, dli, faunaSpecies, healthScore, LIDS, PLACEMENTS, GROW_LIGHTS, lightFor, plantSpecies, VESSELS,
-  type Alert, type LidId, type PlacementId, type TerrariumState,
+  alerts, autoLayout, CREW_COUNTS, CREW_IDS, dli, faunaSpecies, healthScore, LIDS, PLACEMENTS, PLANT_IDS, PLANT_SIZES, plantBiomass,
+  GROW_LIGHTS, lightFor, plantSpecies, VESSELS,
+  type Alert, type LidId, type PlacementId, type PlantSizeId, type TerrariumState,
 } from '../../engine/index.js';
 import { Jar3D } from '../jar/Jar3D.js';
-import { clockOf, dayOf, glassWord, headline, moistureWord, pHWord, plantStatus, soilAirWord, vpdWord } from '../format.js';
+import { clockOf, dayOf, glassWord, headline, moistureWord, pHWord, plantStatus, pluralName, soilAirWord, vpdWord } from '../format.js';
 import { care, store, useStore, type JarRecord } from '../store.js';
 import { Meter, Segmented, Sparkline } from '../ui/controls.js';
+import { Swatch, SwatchRow } from '../ui/Swatch.js';
 import { share, sharedFrom, useIdentity } from '../playground.js';
 import { KeeperForm } from '../ui/KeeperForm.js';
 import { TimeLapse } from '../ui/TimeLapse.js';
@@ -24,7 +26,10 @@ export function Detail({ id }: { id: string }) {
   const [showing, setShowing] = useState<TerrariumState | null>(null);
   const show = useCallback((st: TerrariumState | null) => setShowing(st), []);
   // The section being read decides what the view beside it frames, as in the builder.
-  const { ref: bodyRef, focus, setFocus, claim } = useSectionFocus();
+  const { ref: bodyRef, focus: sectionFocus, setFocus, claim } = useSectionFocus();
+  // Edit mode: plants and wood can be dragged in the view, and the Plants and Animals
+  // sections offer planting, digging out, and adding or taking out animals.
+  const [editing, setEditing] = useState(false);
   if (!j) {
     return (
       <main className="detail-page">
@@ -34,6 +39,13 @@ export function Detail({ id }: { id: string }) {
   }
   const s = j.state;
   const h = headline(s);
+  // While editing, look down onto the soil (as when arranging in the builder) unless the
+  // Animals section is being worked on.
+  const focus = editing && sectionFocus === 'all' ? 'plants' : sectionFocus;
+  const movable = j.spec.hardscape.filter((x) => x === 'wood' || x === 'stone');
+  const arrange = (plantId: string, at: [number, number]) => store.edit(j.id, (r) => movePlantIn(r, plantId, at));
+  const place = (what: 'wood' | 'stone', placed: { at: [number, number]; turn?: number }) =>
+    store.edit(j.id, (r) => { r.spec.placed = { ...r.spec.placed, [what]: placed }; });
   return (
     <main className="detail-page workbench-page">
       <a className="back" href="#/"><ArrowLeft size={16} aria-hidden="true" /> Shelf</a>
@@ -51,20 +63,35 @@ export function Detail({ id }: { id: string }) {
           <Conditions s={s} history={j} />
           <Attention j={j} />
           <Care j={j} />
-          <Plants j={j} />
-          <Animals j={j} />
+          <Plants j={j} editing={editing} />
+          <Animals j={j} editing={editing} />
           <Journal s={s} />
           <Manage j={j} />
         </div>
 
         <aside className="detail-jar workbench-view" aria-label={`${j.spec.name} in 3D`}>
           <div className="stage-3d" onPointerDownCapture={() => setFocus('all')}>
-            <Jar3D spec={j.spec} state={showing ?? s} title={`${j.spec.name}, day ${dayOf(showing ?? s)}`} view="iso" focus={focus} />
-            <span className="stage-focus" aria-live="polite">{FOCUS_LABEL[focus]}</span>
+            <Jar3D spec={j.spec} state={editing ? s : showing ?? s} title={`${j.spec.name}, day ${dayOf(editing ? s : showing ?? s)}`} view="iso" focus={focus}
+              onArrange={editing ? arrange : undefined} onPlace={editing && movable.length ? place : undefined} />
+            <span className="stage-focus" aria-live="polite">{editing ? 'Editing' : FOCUS_LABEL[focus]}</span>
             <span className="stage-score">Health <span className={`score score-${h.tone}`}>{healthScore(s)}</span></span>
-            <span className="stage-hint">Drag to spin. Tap plants, soil and glass.</span>
+            {/* Keyed so the new hint shows (and fades) again. */}
+            <span className="stage-hint" key={editing ? 'edit' : 'spin'}>{editing
+              ? `Drag ${movable.length ? 'plants, wood or stone' : 'a plant'} to move ${movable.length ? 'them' : 'it'}.${movable.includes('wood') ? ' Tap the wood to turn it.' : ''} Drag elsewhere to spin the jar.`
+              : 'Drag to spin. Tap plants, soil and glass.'}</span>
           </div>
-          <OwnLife j={j} onShow={show} />
+          <div className="preview-bar">
+            <button type="button" className={`button${editing ? ' primary' : ''}`} aria-pressed={editing}
+              onClick={() => { setEditing((e) => !e); setShowing(null); }}>
+              {editing ? <><Check size={16} aria-hidden="true" /> Done editing</> : <><PencilLine size={16} aria-hidden="true" /> Edit jar</>}
+            </button>
+            <p className="hint arrange-hint">
+              {editing
+                ? 'Changes happen to the jar as it is now: it keeps its age, soil, water and everything already living in it.'
+                : 'Plant, dig out, add animals or move things around.'}
+            </p>
+          </div>
+          {!editing && <OwnLife j={j} onShow={show} />}
           <p className="jar-caption">
             Day {dayOf(s)}, {clockOf(s)}. Lights {s.climate.lightOn ? 'on' : 'off'}.
           </p>
@@ -289,9 +316,68 @@ function Care({ j }: { j: JarRecord }) {
   );
 }
 
-function Plants({ j }: { j: JarRecord }) {
+/** Living plants at once; the builder's limit. */
+const MAX_PLANTS = 8;
+
+/** Where each living plant stands, u and v in [-1, 1]. */
+function plantSpots(st: TerrariumState, seed: number): [number, number][] {
+  const auto = autoLayout(st.plants, seed);
+  return st.plants.map((p, i) => p.at ?? auto[i]!);
+}
+
+/**
+ * A free spot for a new plant: the place on the floor farthest from every plant already
+ * there and from the wood and stone, leaning toward the middle when it is a tie.
+ */
+function freeSpot(j: JarRecord): [number, number] {
+  const taken = [...plantSpots(j.state, j.spec.seed), ...[j.spec.placed?.wood?.at, j.spec.placed?.stone?.at].filter((x): x is [number, number] => !!x)];
+  let best: [number, number] = [0, 0];
+  let bestScore = -Infinity;
+  for (let u = -0.7; u <= 0.701; u += 0.1) {
+    for (let v = -0.7; v <= 0.701; v += 0.1) {
+      if (Math.hypot(u, v) > 0.8) continue;
+      const room = taken.length ? Math.min(...taken.map(([x, y]) => Math.hypot(u - x, v - y))) : 1;
+      const score = room - 0.15 * Math.hypot(u, v);
+      if (score > bestScore) {
+        bestScore = score;
+        best = [+u.toFixed(2), +v.toFixed(2)];
+      }
+    }
+  }
+  return best;
+}
+
+/** The design entry for a living plant: same species, and the same spot when it has one. */
+function specIndexFor(j: JarRecord, plantId: string): number {
+  const pl = j.state.plants.find((p) => p.id === plantId);
+  if (!pl) return -1;
+  const same = j.spec.plants.map((p, i) => ({ p, i })).filter(({ p }) => p.speciesId === pl.speciesId);
+  const at = pl.at;
+  const exact = at && same.find(({ p }) => p.at && p.at[0] === at[0] && p.at[1] === at[1]);
+  return (exact ?? same[same.length - 1])?.i ?? -1;
+}
+
+function movePlantIn(j: JarRecord, plantId: string, at: [number, number]) {
+  const i = specIndexFor(j, plantId);
+  care.movePlant(j.state, plantId, at);
+  if (i >= 0) j.spec.plants[i] = { ...j.spec.plants[i]!, at };
+}
+
+function Plants({ j, editing }: { j: JarRecord; editing: boolean }) {
   const s = j.state;
   const lost = j.spec.plants.length - s.plants.length;
+  // A dig-out waits for a second tap: it cannot be undone.
+  const [digging, setDigging] = useState<string | null>(null);
+  useEffect(() => {
+    if (!digging) return;
+    const t = setTimeout(() => setDigging(null), 5000);
+    return () => clearTimeout(t);
+  }, [digging]);
+  const digOut = (plantId: string) => store.edit(j.id, (r) => {
+    const i = specIndexFor(r, plantId);
+    care.digOut(r.state, plantId);
+    if (i >= 0) r.spec.plants.splice(i, 1);
+  });
   return (
     <section className="block" aria-labelledby="plants" data-focus="plants">
       <h2 id="plants">Plants</h2>
@@ -312,49 +398,164 @@ function Plants({ j }: { j: JarRecord }) {
                   <Meter value={p.biomassG / sp.maxBiomassG} label={`${sp.commonName} size`} />
                   <span className="roster-num">{p.biomassG.toFixed(1)} g</span>
                 </div>
-                <button type="button" className="icon-button" aria-label={`Prune ${sp.commonName} by a third`} title="Prune by a third"
-                  onClick={() => store.act(j.id, (st2) => care.prune(st2, p.id, 0.33))}>
-                  <Scissors size={16} aria-hidden="true" />
-                </button>
+                {editing ? (
+                  digging === p.id ? (
+                    <span className="roster-actions">
+                      <button type="button" className="button danger small" onClick={() => { digOut(p.id); setDigging(null); }}>Dig it out</button>
+                      <button type="button" className="button quiet small" onClick={() => setDigging(null)}>Keep</button>
+                    </span>
+                  ) : (
+                    <button type="button" className="icon-button" aria-label={`Dig out ${sp.commonName}`} title="Dig out"
+                      onClick={() => setDigging(p.id)}>
+                      <Shovel size={16} aria-hidden="true" />
+                    </button>
+                  )
+                ) : (
+                  <button type="button" className="icon-button" aria-label={`Prune ${sp.commonName} by a third`} title="Prune by a third"
+                    onClick={() => store.act(j.id, (st2) => care.prune(st2, p.id, 0.33))}>
+                    <Scissors size={16} aria-hidden="true" />
+                  </button>
+                )}
               </li>
             );
           })}
         </ul>
       )}
       {lost > 0 && <p className="note">{lost === 1 ? 'One plant has' : `${lost} plants have`} died and returned to the soil.</p>}
+      {editing && <PlantSomething j={j} />}
     </section>
   );
 }
 
-function Animals({ j }: { j: JarRecord }) {
-  const s = j.state;
-  if (s.fauna.length === 0) return (
-    <section className="block" aria-labelledby="animals" data-focus="crew">
-      <h2 id="animals">Animals</h2>
-      <p className="empty-note">No animals. Mold and dead leaves will build up without a clean-up crew.</p>
-    </section>
+/** Plant something new in a living jar, at the size you would buy it. */
+function PlantSomething({ j }: { j: JarRecord }) {
+  const [size, setSize] = useState<PlantSizeId>('small');
+  const [last, setLast] = useState<string | null>(null);
+  const living = j.state.plants.length;
+  const full = living >= MAX_PLANTS;
+  const plant = (speciesId: string) => {
+    store.edit(j.id, (r) => {
+      const at = freeSpot(r);
+      care.plant(r.state, speciesId, plantBiomass(speciesId, size), at);
+      r.spec.plants.push({ speciesId, size, at });
+    });
+    setLast(speciesId);
+  };
+  return (
+    <div className="edit-panel">
+      <div className="edit-panel-head">
+        <h3>Plant something</h3>
+        <Segmented<PlantSizeId> label="Size to plant" size="sm" value={size} onChange={setSize}
+          options={PLANT_SIZES.map((z) => ({ id: z.id, label: z.label }))} />
+      </div>
+      <SwatchRow label="Plant something" multi>
+        {PLANT_IDS.map((id) => {
+          const sp = plantSpecies(id);
+          const n = j.state.plants.filter((p) => p.speciesId === id).length;
+          return (
+            <Swatch key={id} k={`plant:${id}`} kind="action" label={sp.commonName} detail={sp.notes} selected={n > 0} badge={n || undefined}
+              disabled={full} onClick={() => plant(id)} />
+          );
+        })}
+      </SwatchRow>
+      <p className="hint" role="status">
+        {full
+          ? `${MAX_PLANTS} plants is a full jar. Dig one out to make room.`
+          : last
+            ? `Planted a ${plantSpecies(last).commonName.toLowerCase()} in the clearest spot. Drag it in the view to move it.`
+            : 'Each goes in the clearest spot on the soil. Drag it in the view to move it.'}
+      </p>
+    </div>
   );
+}
+
+function Animals({ j, editing }: { j: JarRecord; editing: boolean }) {
+  const s = j.state;
+  const takeAll = (speciesId: string) => store.edit(j.id, (r) => {
+    care.removeAnimals(r.state, speciesId, Infinity);
+    r.spec.fauna = r.spec.fauna.filter((f) => f.speciesId !== speciesId);
+  });
   return (
     <section className="block" aria-labelledby="animals" data-focus="crew">
       <h2 id="animals">Animals</h2>
-      <ul className="roster">
-        {s.fauna.map((f) => {
-          const sp = faunaSpecies(f.speciesId);
-          const pop = Math.round(f.juveniles + f.adults);
-          const series = j.history.slice(-60).map((p) => p.pop[f.speciesId] ?? 0);
+      {s.fauna.length === 0 ? (
+        <p className="empty-note">No animals. Mold and dead leaves will build up without a clean-up crew.</p>
+      ) : (
+        <ul className="roster">
+          {s.fauna.map((f) => {
+            const sp = faunaSpecies(f.speciesId);
+            const pop = Math.round(f.juveniles + f.adults);
+            const series = j.history.slice(-60).map((p) => p.pop[f.speciesId] ?? 0);
+            return (
+              <li key={f.speciesId}>
+                <div className="roster-name">
+                  <span>{sp.commonName}{sp.role === 'pest' && <span className="pill tone-warn">Pest</span>}</span>
+                  <span className="roster-sci">{sp.scientificName}</span>
+                </div>
+                <span className="roster-count">{pop.toLocaleString()}<span className="unit"> + {Math.round(f.eggs).toLocaleString()} eggs</span></span>
+                <Sparkline values={series} min={0} width={120} height={28} />
+                {editing && (
+                  <button type="button" className="button quiet small" onClick={() => takeAll(f.speciesId)}>
+                    Take all out
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {editing && <AddAnimals j={j} />}
+    </section>
+  );
+}
+
+/** Add a batch of a clean-up species, or take a batch back out. */
+function AddAnimals({ j }: { j: JarRecord }) {
+  const [note, setNote] = useState<string | null>(null);
+  const batch = (id: string) => CREW_COUNTS[id]?.[0] ?? 10;
+  const name = (id: string, n: number) => (n === 1 ? faunaSpecies(id).commonName.toLowerCase() : pluralName(faunaSpecies(id).commonName));
+  const add = (id: string) => {
+    const n = batch(id);
+    store.edit(j.id, (r) => {
+      care.addAnimals(r.state, id, n);
+      const f = r.spec.fauna.find((x) => x.speciesId === id);
+      if (f) f.count += n;
+      else r.spec.fauna.push({ speciesId: id, count: n });
+    });
+    setNote(`Added ${n} ${name(id, n)}. They settle in over the next few days.`);
+  };
+  const remove = (id: string) => {
+    const living = j.state.fauna.find((f) => f.speciesId === id);
+    if (!living) return;
+    const pop = Math.round(living.adults + living.juveniles);
+    const n = Math.min(pop, batch(id));
+    store.edit(j.id, (r) => {
+      care.removeAnimals(r.state, id, n);
+      const f = r.spec.fauna.find((x) => x.speciesId === id);
+      if (f) f.count = Math.max(0, f.count - n);
+      r.spec.fauna = r.spec.fauna.filter((x) => x.count > 0 || r.state.fauna.some((g) => g.speciesId === x.speciesId));
+    });
+    setNote(n >= pop ? `Took out all the ${pluralName(faunaSpecies(id).commonName)}.` : `Took out ${n} ${name(id, n)}.`);
+  };
+  return (
+    <div className="edit-panel">
+      <div className="edit-panel-head"><h3>Add animals</h3></div>
+      <SwatchRow label="Add animals" multi>
+        {CREW_IDS.map((id) => {
+          const sp = faunaSpecies(id);
+          const living = j.state.fauna.find((f) => f.speciesId === id);
+          const pop = living ? Math.round(living.adults + living.juveniles) : 0;
           return (
-            <li key={f.speciesId}>
-              <div className="roster-name">
-                <span>{sp.commonName}{sp.role === 'pest' && <span className="pill tone-warn">Pest</span>}</span>
-                <span className="roster-sci">{sp.scientificName}</span>
-              </div>
-              <span className="roster-count">{pop.toLocaleString()}<span className="unit"> + {Math.round(f.eggs).toLocaleString()} eggs</span></span>
-              <Sparkline values={series} min={0} width={120} height={28} />
-            </li>
+            <Swatch key={id} k={`crew:${id}`} kind="action" label={pluralName(sp.commonName).replace(/^./, (c) => c.toUpperCase())} detail={sp.notes}
+              selected={pop > 0} badge={pop ? (pop > 999 ? `${Math.round(pop / 1000)}k` : pop) : undefined}
+              onClick={() => add(id)}
+              removeLabel={`Take out ${Math.min(pop, batch(id))} ${name(id, 2)}`}
+              onRemove={pop > 0 ? () => remove(id) : undefined} />
           );
         })}
-      </ul>
-    </section>
+      </SwatchRow>
+      <p className="hint" role="status">{note ?? 'Tap to add a batch, as you would buy them. Tap \u2212 to take a batch out.'}</p>
+    </div>
   );
 }
 
