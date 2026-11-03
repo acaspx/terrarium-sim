@@ -6,11 +6,42 @@ import { makeRng } from '../../engine/core/math.js';
 import { woodPath, type Layout, type Placed } from './layout.js';
 import { InstancedParts, type Item } from './parts.js';
 
-const STEM = new THREE.CylinderGeometry(0.005, 0.008, 0.09, 8).translate(0, 0.045, 0);
-const CAP = new THREE.LatheGeometry(
-  [[0, -0.001], [0.026, 0.002], [0.034, 0.004], [0.032, 0.012], [0.022, 0.022], [0.01, 0.027], [0, 0.028]].map(([x, y]) => new THREE.Vector2(x, y)),
-  20,
-);
+/** A stem: slim, a little thicker at the foot, with a gentle bend in its profile. */
+const STEM = (() => {
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10;
+    pts.push(new THREE.Vector2(0.005 + 0.0035 * Math.pow(1 - t, 2.5), t * 0.09));
+  }
+  return new THREE.LatheGeometry(pts, 14);
+})();
+/**
+ * The cap: a smooth dome over a rolled rim, from a curve rather than a handful of points,
+ * with fine radial gills on the underside running from the stem out to the rim.
+ */
+const CAP = (() => {
+  const pts: THREE.Vector2[] = [];
+  // The underside, from the stem out to the rim (gills), then over the top to the crown.
+  for (let i = 0; i <= 6; i++) pts.push(new THREE.Vector2(0.005 + (0.03 * i) / 6, -0.001 + 0.004 * (i / 6) ** 2));
+  for (let i = 1; i <= 18; i++) {
+    const a = (i / 18) * (Math.PI / 2);
+    // A bell, broader than tall, with the rim rolled under.
+    pts.push(new THREE.Vector2(0.034 * Math.cos(a) * (1 - 0.06 * Math.sin(a * 2)), 0.003 + 0.025 * Math.sin(a)));
+  }
+  pts.push(new THREE.Vector2(0, 0.028));
+  const g = new THREE.LatheGeometry(pts, 40);
+  // Gills: shallow radial ridges cut into the underside only.
+  const p = g.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    if (y < 0.0035) {
+      const a = Math.atan2(z, x);
+      p.setY(i, y - 0.0016 * Math.pow(Math.abs(Math.sin(a * 20)), 2) * Math.min(1, Math.hypot(x, z) / 0.02));
+    }
+  }
+  g.computeVertexNormals();
+  return g;
+})();
 const CAP_COLORS = ['#b98d5c', '#a87a4a', '#c9a274', '#9c6f45'];
 
 /** A flush of small brown mushrooms on the driftwood and the soil beside it. */

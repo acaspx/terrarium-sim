@@ -267,7 +267,9 @@ function Swarm({ id, look, n, L, lively, quality, obstacles }: {
   if (n === 0) return null;
   return (
     <>
-      <instancedMesh ref={ref} args={[geometry, mats, capacity]} castShadow frustumCulled={false} userData={{ critter: id }} />
+      {/* Springtails and gnats are a couple of millimetres long: their shadows are smaller than a
+          texel of the shadow map, so drawing them into it is all cost. Isopods and crabs cast. */}
+      <instancedMesh ref={ref} args={[geometry, mats, capacity]} castShadow={look.body === 'isopod' || look.body === 'crab'} frustumCulled={false} userData={{ critter: id }} />
     </>
   );
 }
