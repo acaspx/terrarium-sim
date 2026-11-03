@@ -255,6 +255,18 @@ class Store {
     this.emit();
   }
 
+  /**
+   * Change a living jar: what is planted, who lives in it, where things sit. Gets the whole
+   * record, so the design (spec) can follow the jar as it is now, and saves straight away.
+   */
+  edit(id: string, fn: (j: JarRecord) => void) {
+    const j = this.get(id);
+    if (!j) return;
+    fn(j);
+    this.emit();
+    this.save();
+  }
+
   /** Apply a keeper action from engine/care to one jar. */
   act(id: string, fn: (s: TerrariumState) => void) {
     const j = this.get(id);

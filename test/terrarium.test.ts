@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { care, createTerrarium, PRESETS, run, totalWaterG, type Setup } from '../src/engine/index.js';
+import { buildTerrarium, care, createTerrarium, healthScore, PRESETS, RECIPES, run, totalWaterG, type Setup } from '../src/engine/index.js';
 import { thermalPerformance } from '../src/engine/core/math.js';
 
 const days = (n: number) => n * 24;
@@ -119,5 +119,47 @@ describe('engine', () => {
     expect(thermalPerformance(5, r)).toBe(0);
     expect(thermalPerformance(30, r)).toBe(0);
     expect(thermalPerformance(27, r)).toBeLessThan(thermalPerformance(21, r));
+  });
+});
+
+describe('changing a living jar', () => {
+  const grown = () => {
+    const s = buildTerrarium(structuredClone(RECIPES[0]!.spec));
+    run(s, 24 * 30);
+    return s;
+  };
+
+  it('plants a new plant without disturbing the rest of the jar', () => {
+    const s = grown();
+    const before = { hour: s.hour, water: s.pools.substrateWaterG, plants: s.plants.map((p) => ({ ...p })) };
+    const pl = care.plant(s, 'fittonia', 2, [0.4, 0.2]);
+    expect(s.hour).toBe(before.hour);
+    expect(s.pools.substrateWaterG).toBe(before.water);
+    expect(s.plants).toHaveLength(before.plants.length + 1);
+    expect(s.plants.slice(0, -1)).toEqual(before.plants);
+    expect(pl.at).toEqual([0.4, 0.2]);
+    expect(s.events.at(-1)?.type).toBe('care');
+  });
+
+  it('digging a plant out is not counted as a loss, and leaves its broken roots in the soil', () => {
+    const s = grown();
+    const score = healthScore(s);
+    const detritus = s.pools.detritusG;
+    care.digOut(s, s.plants[0]!.id);
+    expect(s.pools.detritusG).toBeGreaterThan(detritus);
+    // Healthy plants left: health holds rather than dropping by a plant's share.
+    expect(healthScore(s)).toBeGreaterThanOrEqual(score - 3);
+  });
+
+  it('takes some animals out, or all of them with their eggs', () => {
+    const s = grown();
+    care.addAnimals(s, 'rough-woodlouse', 10);
+    const f = s.fauna.find((x) => x.speciesId === 'rough-woodlouse')!;
+    const total = f.adults + f.juveniles;
+    care.removeAnimals(s, 'rough-woodlouse', 4);
+    expect(f.adults + f.juveniles).toBeCloseTo(total - 4, 5);
+    care.removeAnimals(s, 'rough-woodlouse', 1000);
+    expect(s.fauna.find((x) => x.speciesId === 'rough-woodlouse')).toBeUndefined();
+    expect(s.events.at(-1)?.message).toBe('Took out all the rough woodlice.');
   });
 });

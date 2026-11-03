@@ -266,6 +266,14 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .journal-recovery span:last-child { color: var(--moss); }
 .journal-care span:last-child { color: var(--muted); }
 
+.roster-actions { display: inline-flex; gap: 6px; }
+.button.small { padding: 5px 10px; font-size: 13px; }
+/* Edit mode on a living jar: the planting and crew pickers sit under their rosters. */
+.edit-panel { margin-top: 14px; padding: 14px 16px 12px; border: 1px dashed var(--rule); border-radius: 14px; }
+.edit-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
+.edit-panel-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.edit-panel .hint { margin: 8px 0 0; }
+
 .manage { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; }
 
